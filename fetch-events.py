@@ -52,6 +52,7 @@ MAX_OUTPUT_JSON_BYTES = 25 * 1024 * 1024  # 25 MB limit for generated event stat
 MAX_CACHE_BYTES = 2 * MAX_ICAL_BYTES  # one cached feed, JSON-escaped
 MAX_RECURRENCE_ITERATIONS = 2000    # CPU-work ceiling for expanding recurrence rules
 MAX_EXPANDED_INSTANCES = 500        # Maximum instances generated per recurring/multiday event
+MAX_FEED_INSTANCES = 20000          # Memory ceiling for one whole feed: the per-event caps multiply
 
 
 def safe_read_bytes(stream, max_bytes=MAX_ICAL_BYTES):
@@ -1283,7 +1284,10 @@ def parse_ics(content, cal_info, window_start, window_end):
                 if window_start <= inst_dt <= window_end:
                     normalized.append(inst)
 
-    return normalized
+        if len(normalized) >= MAX_FEED_INSTANCES:
+            break
+
+    return normalized[:MAX_FEED_INSTANCES]
 
 
 AUTH_FILE = os.path.join(STATE_DIR, "google-auth.json")
@@ -1292,7 +1296,7 @@ AUTH_FILE = os.path.join(STATE_DIR, "google-auth.json")
 # The usual cause is an OAuth app left in "Testing" publishing status: Google
 # expires those refresh tokens after 7 days, so the calendar silently drops
 # out about once a week. Publishing the app ("In production") stops that.
-GOOGLE_AUTH_STATUS_MISSING = "auth_required: run google-auth.py"
+GOOGLE_AUTH_STATUS_MISSING = "auth_required: connect Google with + in Settings"
 GOOGLE_AUTH_STATUS_EXPIRED = "auth_expired: Google login expired or revoked - reconnect in Settings"
 GOOGLE_AUTH_EXPIRED_HINT = (
     "Google rejected the saved login (token expired or revoked). "
@@ -1616,6 +1620,30 @@ def google_auth_status_string(state, detail):
     return f"error: Google token refresh failed ({detail or 'unknown'})"
 
 
+def google_list(url, params, access_token, timeout=15, max_pages=20):
+    """Every item of a paginated Google Calendar list, following nextPageToken."""
+    items, params = [], dict(params)
+    for _ in range(max_pages):
+        req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers={
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": USER_AGENT,
+        })
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(safe_read_bytes(resp, max_bytes=MAX_API_BYTES).decode("utf-8"))
+        items.extend(data.get("items", []))
+        params["pageToken"] = data.get("nextPageToken")
+        if not params["pageToken"]:
+            return items
+    raise ValueError(f"Google returned more than {max_pages} pages")
+
+
+def utc_window(window_start, window_end):
+    """The sync window's local-midnight edges in UTC; Google, JMAP and CalDAV all take UTC bounds."""
+    start = datetime.combine(window_start.date(), datetime.min.time()).astimezone(timezone.utc)
+    end = datetime.combine(window_end.date() + timedelta(days=1), datetime.min.time()).astimezone(timezone.utc)
+    return start, end
+
+
 def fetch_google_api_calendar(cal_info, window_start, window_end):
     """Fetch events directly from Google Calendar API v3."""
     name = cal_info.get("name", "Google Calendar")
@@ -1634,9 +1662,7 @@ def fetch_google_api_calendar(cal_info, window_start, window_end):
         }
 
     encoded_cal_id = urllib.parse.quote(cal_id, safe="")
-    time_min = window_start.strftime("%Y-%m-%dT00:00:00Z")
-    time_max = window_end.strftime("%Y-%m-%dT23:59:59Z")
-
+    time_min, time_max = (t.strftime("%Y-%m-%dT%H:%M:%SZ") for t in utc_window(window_start, window_end))
     params = urllib.parse.urlencode({
         "timeMin": time_min,
         "timeMax": time_max,
@@ -2059,10 +2085,8 @@ def fetch_jmap_calendar(cal_info, window_start, window_end):
         # Step 2b: Query and Get Events
         if raw_events is None:
             query_end = window_end + SYNC_REFRESH_MARGIN
-            cal_filter = {
-                "after": window_start.strftime("%Y-%m-%dT00:00:00Z"),
-                "before": query_end.strftime("%Y-%m-%dT23:59:59Z"),
-            }
+            after, before = (t.strftime("%Y-%m-%dT%H:%M:%SZ") for t in utc_window(window_start, query_end))
+            cal_filter = {"after": after, "before": before}
             if cal_id and cal_id != "primary":
                 cal_filter["inCalendars"] = [cal_id]
 
@@ -2547,10 +2571,16 @@ def google_events_url(cal_info):
             raise ValueError("Google login expired or revoked: reconnect Google in Settings")
         if auth_state == "error":
             raise ValueError(f"Google token refresh failed: {_LAST_GOOGLE_AUTH['detail']}")
-        raise ValueError("Google authentication required: run google-auth.py")
+        raise ValueError("Google authentication required: connect Google with + in Settings")
 
     encoded_cal_id = urllib.parse.quote(cal_id, safe="")
     return f"https://www.googleapis.com/calendar/v3/calendars/{encoded_cal_id}/events", access_token
+
+
+GOOGLE_READONLY_HINT = (
+    "Google only granted read access to this calendar. Reconnect Google "
+    "(the key button next to it in Settings) to allow adding and deleting events."
+)
 
 
 def google_request(method, url, access_token, body=None):
@@ -2561,8 +2591,22 @@ def google_request(method, url, access_token, body=None):
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        raw = safe_read_bytes(resp, max_bytes=MAX_API_BYTES)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = safe_read_bytes(resp, max_bytes=MAX_API_BYTES)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 403:
+            raise
+        # 403 also covers rate limits, quotas and read-only calendars: only a
+        # login without the write scope is fixed by reconnecting.
+        try:
+            err = json.loads(safe_read_bytes(exc, max_bytes=MAX_API_BYTES).decode("utf-8")).get("error", {})
+        except Exception:
+            err = {}
+        reasons = {e.get("reason") for e in err.get("errors", []) if isinstance(e, dict)}
+        if "insufficientPermissions" in reasons:
+            raise ValueError(GOOGLE_READONLY_HINT) from exc
+        raise ValueError(f"Google refused the change: {err.get('message') or 'HTTP 403'}") from exc
     return json.loads(raw.decode("utf-8")) if raw.strip() else {}
 
 
@@ -2723,6 +2767,26 @@ def jmap_session_url(cal_info):
     return session_url
 
 
+def jmap_default_calendar(session):
+    """The id of the account's default calendar, else its first writable one."""
+    payload = {"using": session["using"],
+               "methodCalls": [["Calendar/get", {"accountId": session["account_id"]}, "c0"]]}
+    req = urllib.request.Request(session["api_url"], data=json.dumps(payload).encode("utf-8"),
+                                 headers=session["headers"], method="POST")
+    with open_trusted_jmap(session["opener"], req, session["origin"], timeout=15) as resp:
+        data = json.loads(safe_read_bytes(resp, max_bytes=MAX_API_BYTES).decode("utf-8"))
+    calendars = []
+    for name, args, _ in data.get("methodResponses", []):
+        if name == "error":
+            raise ValueError(f"JMAP error: {args.get('type')}")
+        if name == "Calendar/get":
+            calendars = args.get("list", [])
+    writable = [c for c in calendars if (c.get("myRights") or {}).get("mayWriteOwn", True)]
+    if not writable:
+        raise ValueError("No writable JMAP calendar found on this account")
+    return sorted(writable, key=lambda c: not c.get("isDefault"))[0]["id"]
+
+
 def jmap_event_set(session, call_id, **changes):
     """Run one CalendarEvent/set call; returns its response arguments."""
     payload = {
@@ -2796,9 +2860,11 @@ def create_jmap_event(cal_info, event_data):
     jsevent = {"@type": "Event"}
     jsevent.update({k: v for k, v in jmap_event_fields(event_data).items() if v is not None})
 
+    # An event must belong to at least one calendar; with none configured, use the account's default.
     cal_id = cal_info.get("jmapCalendarId") or cal_info.get("calendarId")
-    if cal_id and cal_id != "primary":
-        jsevent["calendarIds"] = {cal_id: True}
+    if not cal_id or cal_id == "primary":
+        cal_id = jmap_default_calendar(session)
+    jsevent["calendarIds"] = {cal_id: True}
 
     creation_id = f"c_{secrets.token_hex(4)}"
     result = jmap_event_set(session, "set0", create={creation_id: jsevent})
@@ -2920,15 +2986,10 @@ def caldav_error(exc, cal_info):
 
 def ics_escape(value):
     """Escape a text value for an iCalendar content line (RFC 5545 3.3.11)."""
-    return (
-        str(value or "")
-        .replace("\\", "\\\\")
-        .replace(";", "\\;")
-        .replace(",", "\\,")
-        .replace("\r\n", "\\n")
-        .replace("\r", "\\n")
-        .replace("\n", "\\n")
-    )
+    escaped = str(value or "").replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    # splitlines() knows every break a reader may honour (lone CR, U+2028, ...),
+    # so none of them can start a new property.
+    return "\\n".join(escaped.splitlines())
 
 
 def ics_fold(line):

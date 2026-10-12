@@ -316,6 +316,21 @@ class RecurrenceCpuCeilingTests(unittest.TestCase):
         instances = fetch_events.expand_multiday_event(event, window_start, window_end)
         self.assertEqual(instances, [])
 
+    def test_whole_feed_expansion_is_capped(self):
+        # Daily, 60 days long: each event fans out to thousands of day entries.
+        now = fetch_events.datetime.now()
+        window_start = now - fetch_events.timedelta(days=45)
+        window_end = now + fetch_events.timedelta(days=90)
+        vevent = (
+            "BEGIN:VEVENT\r\nUID:x\r\n"
+            f"DTSTART;VALUE=DATE:{window_start:%Y%m%d}\r\n"
+            f"DTEND;VALUE=DATE:{window_start + fetch_events.timedelta(days=60):%Y%m%d}\r\n"
+            "RRULE:FREQ=DAILY\r\nSUMMARY:a\r\nEND:VEVENT\r\n"
+        )
+        ics = "BEGIN:VCALENDAR\r\n" + vevent * 50 + "END:VCALENDAR\r\n"
+        events = fetch_events.parse_ics(ics, {}, window_start, window_end)
+        self.assertEqual(len(events), fetch_events.MAX_FEED_INSTANCES)
+
     def test_daily_recurrence_from_distant_past_terminates_under_cpu_ceiling(self):
         window_start = fetch_events.datetime(2026, 8, 1)
         window_end = fetch_events.datetime(2026, 8, 31)
@@ -659,17 +674,27 @@ class TwoWayEventSyncTests(unittest.TestCase):
             s.__exit__ = lambda self, *args: None
             return s
 
-        s1 = make_stream(session_resp_bytes)
-        s2 = make_stream(set_resp_bytes)
-        s3 = make_stream(session_resp_bytes)
-        s4 = make_stream(del_resp_bytes)
+        # No calendar is configured, so the default one is looked up: an event needs at least one calendar.
+        cals_resp_bytes = json.dumps({"methodResponses": [["Calendar/get", {"list": [
+            {"id": "cal_other", "isDefault": False},
+            {"id": "cal_default", "isDefault": True},
+        ]}, "c0"]]}).encode("utf-8")
+        responses = [make_stream(b) for b in (
+            session_resp_bytes, cals_resp_bytes, set_resp_bytes, session_resp_bytes, del_resp_bytes)]
+        sent = []
 
-        with mock.patch.object(fetch_events, "open_trusted_jmap", side_effect=[s1, s2, s3, s4]), \
+        def fake_open(opener, request, *args, **kwargs):
+            sent.append(request)
+            return responses.pop(0)
+
+        with mock.patch.object(fetch_events, "open_trusted_jmap", fake_open), \
              mock.patch.object(fetch_events, "secrets") as mock_secrets:
             mock_secrets.token_hex.return_value = "cid"
             create_res = fetch_events.create_jmap_event(cal_info, event_data)
             self.assertEqual(create_res["status"], "success")
             self.assertEqual(create_res["id"], "jmap_evt_456")
+            created = json.loads(sent[2].data)["methodCalls"][0][1]["create"]["c_cid"]
+            self.assertEqual(created["calendarIds"], {"cal_default": True})
 
             del_res = fetch_events.delete_jmap_event(cal_info, "jmap_evt_456")
             self.assertEqual(del_res["status"], "success")

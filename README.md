@@ -122,7 +122,7 @@ bind = SUPER ALT, C, exec, omarchy-shell promaa.clock addEvent
 
 ## Configuration
 
-Configure your calendar feeds and preferences using the in-app **Settings Menu (`󰒓`)** or directly in `~/.config/omarchy/calendars.json`:
+The easiest way to add calendars is the guided setup (see [Connecting a Calendar](#connecting-a-calendar)). Everything ends up in `~/.config/omarchy/calendars.json`, which you can also edit by hand:
 
 ```json
 [
@@ -148,7 +148,6 @@ Configure your calendar feeds and preferences using the in-app **Settings Menu (
   },
   {
     "name": "Apple iCloud",
-    "url": "webcal://pXX-caldav.icloud.com/published/2/xxxxxxxx",
     "caldavUrl": "https://pXX-caldav.icloud.com/1234567890/calendars/home/",
     "username": "you@icloud.com",
     "password": "xxxx-xxxx-xxxx-xxxx",
@@ -178,7 +177,7 @@ Configure your calendar feeds and preferences using the in-app **Settings Menu (
 ]
 ```
 
-Edits to `calendars.json` hot-reload automatically without restarting the shell.
+Edits to `calendars.json` hot-reload automatically without restarting the shell. A CalDAV entry (`caldavUrl` + `username` + `password`) needs no public `url`: events are read and written with the same login.
 
 ### Passwords and tokens
 
@@ -197,120 +196,30 @@ An entry with `"translateKorean": true` sends the title and location of its
 Korean events to Google Translate (`translate.googleapis.com`) and shows the
 English result. It is off by default. Leave it off for a private calendar.
 
-## Getting Calendar Links
+## Connecting a Calendar
 
-### Google Calendar (Private iCal)
-1. Open [Google Calendar](https://calendar.google.com/) on the web.
-2. In the left sidebar, hover over your calendar $\rightarrow$ click the three dots $\rightarrow$ **Settings and sharing**.
-3. Scroll down to **Integrate calendar** $\rightarrow$ Copy the **Secret address in iCal format**.
+Open the panel's **Settings (`󰒓`)** and click **`󰐕`**. A terminal opens with a short guided setup:
+pick your provider, it opens the matching page of the
+**[setup guide](https://promaaa.github.io/sync-calendar-omarchy/)**, you paste the one thing it
+asks for (a Google sign-in, an iCloud app password, a Fastmail token, a link), it checks that it
+works, lets you choose calendars and saves them. You can also run it directly:
 
-### Apple iCloud Calendar
-1. Open [iCloud Calendar](https://www.icloud.com/calendar) or Apple Calendar on macOS / iOS.
-2. Click the **Share** icon next to the calendar $\rightarrow$ Turn on **Public Calendar** (or share link).
-3. Copy the `webcal://...` link.
-
-That published link is read-only: it shows your events but cannot accept new ones.
-To also **create, edit and delete iCloud events** from the panel, add CalDAV credentials
-to the same entry:
-
-1. Create an app-specific password at [appleid.apple.com](https://appleid.apple.com/)
-   $\rightarrow$ **Sign-In and Security** $\rightarrow$ **App-Specific Passwords**.
-   Your Apple ID password will not work.
-2. Put your Apple ID and that password on the calendar entry as `"username"` and
-   `"password"`, then ask the plugin for your collection URLs:
-
-   ```bash
-   ~/.config/omarchy/plugins/promaa.clock/fetch-events.py --caldav-discover "Apple iCloud"
-   ```
-
-3. Copy the `caldavUrl` of the calendar you want to write to into the entry.
-
-With these three fields the plugin reads the calendar over CalDAV too, so
-changes from other devices appear at the next sync. The `url` (the published
-link) becomes optional: the plugin reads it only when the CalDAV read fails.
-
-The same three fields work for any CalDAV server (Nextcloud, Radicale, Baïkal,
-Zimbra); only the discovery starting point differs, so set `caldavUrl` to the
-server root (e.g. `https://nextcloud.example.com/remote.php/dav/`) before running
-discovery. HTTPS is required, the credentials are never sent over plain HTTP, and
-a redirect off the calendar's own host is refused.
-
-Since `calendars.json` then holds a password, keep it private: `chmod 600
-~/.config/omarchy/calendars.json` (the plugin writes it that way itself).
-
-### Proton Calendar
-1. Open [Proton Calendar](https://calendar.proton.me/) on the web.
-2. Go to **Settings** $\rightarrow$ **Calendars** $\rightarrow$ Click **Share** next to the calendar.
-3. Under **Share outside Proton**, click **Create link** (choose Full details) and copy the `.ics` link.
-
-### Microsoft Outlook / Office 365
-1. Open [Outlook on the web](https://outlook.live.com/calendar/).
-2. Go to **Settings (`󰒓`)** $\rightarrow$ **Calendar** $\rightarrow$ **Shared calendars**.
-3. Under **Publish a calendar**, select your calendar and permissions $\rightarrow$ Click **Publish** $\rightarrow$ Copy the **ICS** link.
-
-### JMAP Calendar (Fastmail, Stalwart, Cyrus, Apache James)
-
-JMAP is a modern, fast, JSON-based calendar standard ([RFC 9670](https://www.rfc-editor.org/rfc/rfc9670) / [RFC 8984](https://www.rfc-editor.org/rfc/rfc8984)). It syncs directly via API tokens with zero OAuth setup required.
-
-#### 1. Fastmail
-1. Go to Fastmail **Settings (`󰒓`)** $\rightarrow$ **Privacy & Security** $\rightarrow$ **Integrations** $\rightarrow$ **Manage API tokens**.
-2. Click **New API Token** $\rightarrow$ select **Calendars** (or Full access) $\rightarrow$ Generate and copy the token.
-3. Add in the plugin settings (**Settings (`󰒓`) $\rightarrow$ + Add Calendar $\rightarrow$ JMAP**):
-   - **Session URL**: `https://api.fastmail.com/jmap/session` *(default)*
-   - **API Token**: `fmu1-xxxxxxxxxxxxxxxx`
-
-#### 2. Stalwart / Cyrus / Generic JMAP Servers
-- **Session URL**: `https://mail.example.com/.well-known/jmap` (or `https://mail.example.com/jmap/session`)
-- **API Token**: Your user / application Bearer token
-- **Calendar ID**: *(Optional)* Specific calendar ID or leave blank to query all calendars in your account.
-
-### Nextcloud / ownCloud / Generic iCal
-1. In your calendar web interface, open calendar settings / sharing options.
-2. Look for **Public link**, **Subscription link**, or **Export / iCal link** (`.ics` or `webcal://`).
-3. Paste the URL into the plugin settings.
-
-### Google Calendar API (Restricted Shared Calendars)
-
-> [!TIP]
-> **For your own calendars**, use the **Secret address in iCal format** above, it requires zero API setup.
-> The Google Calendar API is only needed for shared or organization calendars where iCal export is restricted.
-
-#### 1. Setup Google Cloud Project & Credentials
-1. Go to **[Google Cloud Console](https://console.cloud.google.com/)** and create a project (or select an existing one).
-2. Enable the **Google Calendar API** under **APIs & Services $\rightarrow$ Library**.
-3. Configure the **OAuth consent screen** (<https://console.cloud.google.com/apis/credentials/consent>):
-   - Set User Type to **External** (or **Internal** if using a company Google Workspace account).
-   - Enter an app name (e.g., `Omarchy Calendar`) and save.
-   - Under **Test users**, click **+ Add users** and **add your Google email address**.
-   - **Publish the app.** On the consent screen / **Audience** page, set **Publishing status** to **In production** (click **Publish app**). No Google review is needed for personal use of the `calendar.events` scope (read, create, edit and delete events); you will just see an "unverified app" warning once during sign-in.
-
-> [!IMPORTANT]
-> Leaving the app in **Testing** status makes Google expire the refresh token after **7 days**. The plugin then shows `auth_expired` for that calendar and the events disappear until you sign in again. Publishing the app is what makes the connection permanent. If your Google account belongs to a Workspace organisation (school or company), choosing User Type **Internal** has the same effect.
-
-4. Create Credentials (<https://console.cloud.google.com/apis/credentials>):
-   - Click **+ Create Credentials $\rightarrow$ OAuth client ID**.
-   - Set Application type strictly to **Desktop app** *(do not select "Web application")*.
-   - Copy your **Client ID** and **Client Secret** (or download the client JSON to `~/Downloads`).
-
-#### 2. Run the Auth Helper
 ```bash
-python3 ~/.config/omarchy/plugins/promaa.clock/google-auth.py
+python3 ~/.config/omarchy/plugins/promaa.clock/setup.py          # menu
+python3 ~/.config/omarchy/plugins/promaa.clock/setup.py google   # or icloud, jmap, caldav, ics, local
 ```
-- The helper will prompt interactively for your Client ID and Client Secret (or automatically detect the downloaded credentials file in `~/Downloads`).
-- A browser window will open asking you to sign in.
-- If Google shows *"Google hasn't verified this app"*, click **Advanced $\rightarrow$ Go to Omarchy Calendar (unsafe) $\rightarrow$ Continue / Allow**.
 
-#### 3. Find Your Calendar ID
-- For your primary calendar: use `"primary"` or your full email address.
-- For secondary or shared calendars: open [Google Calendar](https://calendar.google.com/) $\rightarrow$ Calendar settings $\rightarrow$ Scroll to **Integrate calendar** $\rightarrow$ Copy the exact **Calendar ID** (e.g., `xyz@group.calendar.google.com`).
+| Provider | Access | What you need |
+| --- | --- | --- |
+| [Google](https://promaaa.github.io/sync-calendar-omarchy/#google) | read & write | your own Google Cloud app, about 5 minutes once |
+| [Apple iCloud](https://promaaa.github.io/sync-calendar-omarchy/#icloud) | read & write | an app-specific password |
+| [Fastmail / JMAP](https://promaaa.github.io/sync-calendar-omarchy/#jmap) | read & write | an API token |
+| [Nextcloud / CalDAV](https://promaaa.github.io/sync-calendar-omarchy/#caldav) | read & write | an app password |
+| [Any .ics link](https://promaaa.github.io/sync-calendar-omarchy/#ics) | read only | the link (Proton, Outlook, Google secret address) |
 
-#### Troubleshooting
-* **`Error 400: redirect_uri_mismatch`**: Make sure the credential type is set to **Desktop app**, not Web application.
-* **`Access blocked: App has not completed verification`**: Add your Google account email to **Test users** in the OAuth consent screen.
-* **Calendar disconnects every ~7 days / status `auth_expired`**: Your OAuth app is in **Testing** publishing status, so Google revokes the refresh token weekly. Set the app to **In production** (see step 1 above), then click **Reconnect** in the plugin settings or run `google-auth.py` once more. The plugin sends a desktop notification the first time Google rejects the saved login.
-* **`HTTP Error 404: Not Found`**: Check that the `googleCalendarId` is the exact Calendar ID (not the display name). Test the sync with `python3 ~/.config/omarchy/plugins/promaa.clock/fetch-events.py`.
-* **Adding or deleting a Google event fails with `403 insufficientPermissions`**: Logins made before v1.4.4 were granted the read-only scope. Click **Reconnect** in the plugin settings or run `google-auth.py` once more to grant the `calendar.events` scope; syncing keeps working in the meantime.
-
+Passwords and tokens it saves go to the keyring when one runs (see above), else to files with mode 0600.
+If Google ever shows `auth_expired`, or adding an event fails with `insufficientPermissions`
+(logins from before v1.4.4 were read-only), click **`󰌆`** next to the calendar to sign in again.
 
 ## Uninstallation & Clean Removal
 

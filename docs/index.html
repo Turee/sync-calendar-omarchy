@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en" data-theme="tokyo-night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chronica Setup Guide</title>
+<meta name="description" content="Connect Google, iCloud, Fastmail, Nextcloud or any .ics calendar to Chronica, the Omarchy calendar plugin.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script>
+  // Remembered theme, applied before paint. Storage can be blocked: fall back silently.
+  try { var t = localStorage.getItem("chronica-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+<style>
+/* Palettes from omarchy.org, so the guide looks like the manual it sits next to. */
+:root, [data-theme=tokyo-night] {
+  --bg-deep: #13141c; --bg: #1a1b26; --surface: #1f2230; --surface-2: #24283b;
+  --border-subtle: #24283b; --border-strong: #414868;
+  --text: #c0caf5; --text-secondary: #a9b1d6; --text-muted: #8b93b8;
+  --brand: #9ece6a; --brand-ink: #0c0e10; --selection: #292e42;
+  --elevation: 0 0 0 1px oklch(100% 0 0 / .07); color-scheme: dark;
+}
+[data-theme=catppuccin] {
+  --bg-deep: #161622; --bg: #1e1e2e; --surface: #282839; --surface-2: #313244;
+  --border-subtle: #313244; --border-strong: #585b70;
+  --text: #cdd6f4; --text-secondary: #cdd6f4; --text-muted: #9399b2;
+  --brand: #89b4fa; --brand-ink: #0c0e10; --selection: #45475a; color-scheme: dark;
+}
+[data-theme=gruvbox] {
+  --bg-deep: #1e1e1e; --bg: #282828; --surface: #32302f; --surface-2: #3c3836;
+  --border-subtle: #3c3836; --border-strong: #665c54;
+  --text: #d4be98; --text-secondary: #d4be98; --text-muted: #a89984;
+  --brand: #7daea3; --brand-ink: #0c0e10; --selection: #504945; color-scheme: dark;
+}
+[data-theme=nord] {
+  --bg-deep: #222730; --bg: #2e3440; --surface: #343b49; --surface-2: #3b4252;
+  --border-subtle: #3b4252; --border-strong: #4c566a;
+  --text: #d8dee9; --text-secondary: #d8dee9; --text-muted: #9fa7b4;
+  --brand: #81a1c1; --brand-ink: #0c0e10; --selection: #434c5e; color-scheme: dark;
+}
+[data-theme=everforest] {
+  --bg-deep: #21272c; --bg: #2d353b; --surface: #303a40; --surface-2: #343f44;
+  --border-subtle: #343f44; --border-strong: #475258;
+  --text: #d3c6aa; --text-secondary: #d3c6aa; --text-muted: #918f84;
+  --brand: #7fbbb3; --brand-ink: #0c0e10; --selection: #3d484d; color-scheme: dark;
+}
+[data-theme=matte-black] {
+  --bg-deep: #0d0d0d; --bg: #121212; --surface: #181818; --surface-2: #1e1e1e;
+  --border-subtle: #1e1e1e; --border-strong: #333;
+  --text: #eaeaea; --text-secondary: #bebebe; --text-muted: #8a8a8a;
+  --brand: #e68e0d; --brand-ink: #0c0e10; --selection: #2a2a2a; color-scheme: dark;
+}
+[data-theme=rose-pine] {
+  --bg-deep: #ede7e1; --bg: #faf4ed; --surface: #fffaf3; --surface-2: #ede7e1;
+  --border-subtle: #e1dbd5; --border-strong: #cecacd;
+  --text: #575279; --text-secondary: #5e587d; --text-muted: #676284;
+  --brand: #56949f; --brand-ink: #fff; --selection: #dfdad9;
+  --elevation: 0 0 0 1px oklch(0% 0 0 / .06), 0 1px 3px oklch(0% 0 0 / .05); color-scheme: light;
+}
+[data-theme=flexoki-light] {
+  --bg-deep: #f2efe4; --bg: #fffcf0; --surface: #f9f6ea; --surface-2: #f2efe4;
+  --border-subtle: #e5e2d8; --border-strong: #b7b5ac;
+  --text: #100f0f; --text-secondary: #454340; --text-muted: #555450;
+  --brand: #205ea6; --brand-ink: #fff; --selection: #cecdc3;
+  --elevation: 0 0 0 1px oklch(0% 0 0 / .06), 0 1px 3px oklch(0% 0 0 / .05); color-scheme: light;
+}
+
+* { box-sizing: border-box; border-radius: 0; }
+::selection { background: var(--selection); }
+html { scroll-padding-top: 72px; }
+body {
+  margin: 0; background: var(--bg); color: var(--text-secondary);
+  font: 15px/1.65 "Geist", system-ui, sans-serif; -webkit-font-smoothing: antialiased;
+}
+a { color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+a:hover { text-decoration-color: var(--brand); }
+code, kbd, pre, select { font-family: "JetBrains Mono", monospace; }
+code { background: var(--surface-2); color: var(--text); padding: .15em .4em; font-size: .86em; }
+pre { background: var(--bg-deep); box-shadow: var(--elevation); margin: 1.25em 0; padding: 1em 1.25em; overflow-x: auto; }
+pre code { background: none; padding: 0; font-size: 13px; }
+pre::-webkit-scrollbar { height: 8px; }
+pre::-webkit-scrollbar-thumb { background: var(--border-strong); }
+
+header {
+  position: sticky; top: 0; z-index: 10; background: color-mix(in oklab, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-subtle);
+}
+.bar { max-width: 72rem; margin: 0 auto; padding: 0 16px; height: 56px; display: flex; align-items: center; gap: 24px; }
+.logo { color: var(--text); font-weight: 600; text-decoration: none; letter-spacing: -.01em; }
+.bar nav { display: flex; gap: 20px; font-size: 14px; }
+.bar nav a { color: var(--text-muted); text-decoration: none; }
+.bar nav a:hover { color: var(--text); }
+.bar select {
+  margin-left: auto; background: var(--surface); color: var(--text-secondary);
+  border: 1px solid var(--border-subtle); padding: 4px 8px; font-size: 12px;
+}
+
+.layout { max-width: 72rem; margin: 0 auto; padding: 0 16px; display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 48px; }
+aside { position: sticky; top: 56px; align-self: start; padding: 40px 0; }
+aside h2 { margin: 0 0 14px; font-size: 12px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); }
+aside ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
+aside a { color: var(--text-muted); text-decoration: none; }
+aside a:hover { color: var(--text); }
+
+main { max-width: 42rem; padding: 40px 0 120px; }
+.subtitle { margin: 0 0 10px; color: var(--brand); font-size: 12px; font-weight: 500; letter-spacing: .18em; text-transform: uppercase; }
+h1 { margin: 0 0 24px; color: var(--text); font-size: 1.875rem; line-height: 1.2; font-weight: 600; letter-spacing: -.025em; }
+h2 { margin: 2.5em 0 .6em; color: var(--text); font-size: 1.25rem; font-weight: 600; letter-spacing: -.01em; }
+h2 a { color: inherit; text-decoration: none; }
+h2 .hash { color: var(--text-muted); margin-left: .35em; opacity: 0; transition: opacity .15s ease-out; }
+h2 a:hover .hash, h2 a:focus-visible .hash { opacity: 1; }
+p { margin: 0 0 1em; }
+.tag { color: var(--text-muted); font-size: 14px; }
+ol.steps { margin: 0 0 1em; padding-left: 1.4em; }
+ol.steps li { margin-bottom: .55em; }
+li::marker { color: var(--text-muted); }
+b { color: var(--text); font-weight: 600; }
+blockquote { border-left: 2px solid var(--brand); color: var(--text-muted); margin: 1.25em 0; padding: .25em 0 .25em 1.25em; }
+blockquote p:last-child { margin: 0; }
+hr { border: 0; border-top: 1px solid var(--border-subtle); margin: 3em 0 1.5em; }
+footer { color: var(--text-muted); font-size: 13px; }
+
+@media (max-width: 760px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  aside { display: none; }
+  .bar nav { display: none; }
+  main { padding-top: 28px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <a class="logo" href="#top">Chronica</a>
+    <nav>
+      <a href="https://plugins.omarchy.org/plugin.html?id=promaa.clock">Plugin</a>
+      <a href="https://github.com/promaaa/sync-calendar-omarchy">GitHub</a>
+      <a href="https://omarchy.org/manual/">Omarchy Manual</a>
+    </nav>
+    <select id="theme" aria-label="Change the theme">
+      <option value="tokyo-night">Tokyo Night</option>
+      <option value="catppuccin">Catppuccin</option>
+      <option value="gruvbox">Gruvbox</option>
+      <option value="nord">Nord</option>
+      <option value="everforest">Everforest</option>
+      <option value="matte-black">Matte Black</option>
+      <option value="rose-pine">Rosé Pine</option>
+      <option value="flexoki-light">Flexoki Light</option>
+    </select>
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+    <h2>Calendars</h2>
+    <ol>
+      <li><a href="#google">Google Calendar</a></li>
+      <li><a href="#icloud">Apple iCloud</a></li>
+      <li><a href="#jmap">Fastmail / JMAP</a></li>
+      <li><a href="#caldav">Nextcloud / CalDAV</a></li>
+      <li><a href="#ics">Any .ics link</a></li>
+    </ol>
+  </aside>
+
+  <main id="top">
+    <p class="subtitle">Setup guide</p>
+    <h1>Connect your calendar</h1>
+    <p>Open <b>Settings</b> in the calendar panel and click <b>+</b>. A terminal asks which calendar you use and opens the matching section below. Follow the steps, paste what it asks for, and it does the rest.</p>
+    <pre><code>omarchy plugin add https://github.com/promaaa/sync-calendar-omarchy.git --enable --yes</code></pre>
+
+    <h2 id="google"><a href="#google">Google Calendar<span class="hash" aria-hidden="true">#</span></a></h2>
+    <p class="tag">Read &amp; write. Google needs a small app of your own: about 5 minutes, once.</p>
+    <ol class="steps">
+      <li><a href="https://console.cloud.google.com/projectcreate" target="_blank">Create a project</a> named <code>Chronica</code>, then make sure it is selected at the top of the page.</li>
+      <li><a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank">Enable the Google Calendar API</a>.</li>
+      <li><a href="https://console.cloud.google.com/auth/overview" target="_blank">Open Google Auth Platform</a> → <b>Get started</b>. App name <code>Chronica</code>, your email as support and contact email, audience <b>External</b>, then <b>Create</b>.</li>
+      <li><a href="https://console.cloud.google.com/auth/audience" target="_blank">Audience</a> → <b>Publish app</b> → <b>Confirm</b>. The status should read <b>In production</b>.</li>
+      <li><a href="https://console.cloud.google.com/auth/clients/create" target="_blank">Create a client</a>: application type <b>Desktop app</b>, then <b>Create</b> and <b>Download JSON</b>. Keep it in <code>~/Downloads</code>.</li>
+      <li>Back in the terminal, press <b>Enter</b>. Sign in in the browser. On <em>"Google hasn't verified this app"</em>, click <b>Advanced</b> → <b>Go to Chronica</b>, tick both permissions and <b>Continue</b>.</li>
+      <li>Pick the calendars to show. Done.</li>
+    </ol>
+    <blockquote><p><b>Why publish?</b> An app left in <em>Testing</em> logs you out every 7 days. Publishing your own app needs no review from Google; the "unverified" warning only means the app is yours rather than Google-checked.</p></blockquote>
+    <blockquote><p><b>Only reading your own calendar?</b> Skip all of this and use its secret iCal link instead (see <a href="#ics">Any .ics link</a>).</p></blockquote>
+
+    <h2 id="icloud"><a href="#icloud">Apple iCloud<span class="hash" aria-hidden="true">#</span></a></h2>
+    <p class="tag">Read &amp; write. Needs two-factor authentication on your Apple Account.</p>
+    <ol class="steps">
+      <li><a href="https://account.apple.com/account/manage" target="_blank">Open your Apple Account</a> → <b>Sign-In and Security</b> → <b>App-Specific Passwords</b> → <b>+</b>.</li>
+      <li>Name it <code>Chronica</code> and copy the <code>xxxx-xxxx-xxxx-xxxx</code> password. Your usual Apple password will not work here.</li>
+      <li>In the terminal, enter your Apple Account email and that password, then pick your calendars.</li>
+    </ol>
+
+    <h2 id="jmap"><a href="#jmap">Fastmail / JMAP<span class="hash" aria-hidden="true">#</span></a></h2>
+    <p class="tag">Read &amp; write. Also Stalwart, Cyrus and other JMAP servers.</p>
+    <ol class="steps">
+      <li>Fastmail: <a href="https://app.fastmail.com/settings/security/tokens" target="_blank">Settings → Privacy &amp; Security → API tokens</a> → <b>New API token</b>, give it <b>Calendars</b> access (read and write to add events), and copy it.</li>
+      <li>Other servers: use your account's API or bearer token. The session URL is usually <code>https://mail.example.com/.well-known/jmap</code>.</li>
+      <li>In the terminal, keep the default session URL for Fastmail and paste the token.</li>
+    </ol>
+
+    <h2 id="caldav"><a href="#caldav">Nextcloud / CalDAV<span class="hash" aria-hidden="true">#</span></a></h2>
+    <p class="tag">Read &amp; write. Also ownCloud, Radicale, Baïkal, Zimbra. HTTPS only.</p>
+    <ol class="steps">
+      <li>Nextcloud: <b>Personal settings</b> → <b>Security</b> → <b>Devices &amp; sessions</b> → name it <code>Chronica</code> → <b>Create new app password</b>, and copy it.</li>
+      <li>In the terminal, enter your server address (e.g. <code>cloud.example.com</code>). For a server other than Nextcloud, replace the suggested CalDAV address with its own.</li>
+      <li>Enter your username and the app password, then pick your calendars.</li>
+    </ol>
+
+    <h2 id="ics"><a href="#ics">Any .ics link<span class="hash" aria-hidden="true">#</span></a></h2>
+    <p class="tag">Read only, nothing to sign in to. Copy the link, paste it in the terminal.</p>
+    <ol class="steps">
+      <li><b>Google</b>: <a href="https://calendar.google.com/calendar/r/settings" target="_blank">Calendar settings</a> → your calendar → <b>Integrate calendar</b> → <b>Secret address in iCal format</b>.</li>
+      <li><b>Proton</b>: <a href="https://calendar.proton.me/" target="_blank">Proton Calendar</a> → Settings → Calendars → <b>Share</b> → <b>Share outside Proton</b> → <b>Create link</b> (full details).</li>
+      <li><b>Outlook / Microsoft 365</b>: <a href="https://outlook.live.com/calendar/0/options/calendar/SharedCalendars" target="_blank">Shared calendars</a> → <b>Publish a calendar</b> → <b>Publish</b> → copy the <b>ICS</b> link.</li>
+      <li><b>Anything else</b>: look for a "public", "subscribe", "export" or <code>webcal://</code> link.</li>
+    </ol>
+
+    <hr>
+    <footer>
+      <p>Stuck? <a href="https://github.com/promaaa/sync-calendar-omarchy/issues">Open an issue</a>. Your credentials never leave your machine: they live in <code>~/.config/omarchy/calendars.json</code> and <code>~/.local/state/omarchy/</code>.</p>
+    </footer>
+  </main>
+</div>
+
+<script>
+  var pick = document.getElementById("theme");
+  pick.value = document.documentElement.dataset.theme;
+  pick.addEventListener("change", function () {
+    document.documentElement.dataset.theme = pick.value;
+    try { localStorage.setItem("chronica-theme", pick.value); } catch (e) {}
+  });
+</script>
+</body>
+</html>

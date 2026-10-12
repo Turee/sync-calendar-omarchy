@@ -133,6 +133,15 @@ class VeventBuildTests(unittest.TestCase):
         for line in ics.split("\r\n"):
             self.assertNotIn("\n", line)
 
+    def test_lone_and_unicode_line_breaks_cannot_inject_a_property(self):
+        ics = fetch_events.build_vevent(
+            {"title": "Lunch\rATTENDEE:mailto:x@evil.test\u2028X-A:1", "start": "2026-09-14T12:00:00"},
+            "uid-5",
+        )
+        lines = fetch_events.unfold_lines(ics)
+        self.assertIn("SUMMARY:Lunch\\nATTENDEE:mailto:x@evil.test\\nX-A:1", lines)
+        self.assertFalse(any(line.startswith(("ATTENDEE", "X-A")) for line in lines))
+
     def test_long_lines_are_folded_without_splitting_a_character(self):
         ics = fetch_events.build_vevent(
             {"title": "é" * 200, "start": "2026-09-14T12:00:00"}, "uid-5"

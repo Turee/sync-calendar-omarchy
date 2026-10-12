@@ -21,7 +21,11 @@ STATE_DIR = os.path.expanduser("~/.local/state/omarchy")
 AUTH_FILE = os.path.join(STATE_DIR, "google-auth.json")
 PORT = 8088
 REDIRECT_URI = f"http://127.0.0.1:{PORT}"
-SCOPE = "https://www.googleapis.com/auth/calendar.events"
+# Read and write events, and list the account's calendars so setup can offer them.
+SCOPE = " ".join([
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+])
 
 MAX_API_BYTES = 5 * 1024 * 1024     # 5 MB limit for API JSON responses
 MAX_CONFIG_BYTES = 1 * 1024 * 1024  # 1 MB limit for config/auth files
@@ -123,56 +127,37 @@ def exchange_code_for_tokens(client_id, client_secret, code):
         return json.loads(raw.decode("utf-8"))
 
 
-def main():
-    global expected_state
+def find_downloaded_client():
+    """(client_id, client_secret, filename) from a client_secret_*.json in ~/Downloads, or None."""
+    downloads_dir = os.path.expanduser("~/Downloads")
+    if not os.path.isdir(downloads_dir):
+        return None
+    names = [f for f in os.listdir(downloads_dir) if f.startswith("client_secret_") and f.endswith(".json")]
+    # Newest first: a fresh download beats a client from an older attempt.
+    names.sort(key=lambda f: os.path.getmtime(os.path.join(downloads_dir, f)), reverse=True)
+    for fname in names:
+        try:
+            secret_data = safe_load_json(os.path.join(downloads_dir, fname), max_bytes=MAX_CONFIG_BYTES) or {}
+        except Exception:
+            continue
+        inst = secret_data.get("installed") or secret_data.get("web", {})
+        if inst.get("client_id") and inst.get("client_secret"):
+            return inst["client_id"], inst["client_secret"], fname
+    return None
+
+
+def load_saved_auth():
+    return backend.reveal_secrets(safe_load_json(AUTH_FILE, max_bytes=MAX_CONFIG_BYTES) or {},
+                                  backend.GOOGLE_SECRET_FIELDS, secret_id="google")
+
+
+def authorize(client_id, client_secret):
+    """Run the browser sign-in and save the tokens. Raises RuntimeError on failure."""
+    global auth_code, auth_failed, expected_state
     os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
-
-    client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
-    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-
-    existing_auth = backend.reveal_secrets(safe_load_json(AUTH_FILE, max_bytes=MAX_CONFIG_BYTES) or {},
-                                           backend.GOOGLE_SECRET_FIELDS, secret_id="google")
-    client_id = client_id or existing_auth.get("client_id", "")
-    client_secret = client_secret or existing_auth.get("client_secret", "")
-
-    if len(sys.argv) >= 3:
-        client_id = sys.argv[1].strip()
-        client_secret = sys.argv[2].strip()
-
-    if not client_id or not client_secret:
-        downloads_dir = os.path.expanduser("~/Downloads")
-        if os.path.exists(downloads_dir):
-            for fname in os.listdir(downloads_dir):
-                if fname.startswith("client_secret_") and fname.endswith(".json"):
-                    try:
-                        secret_data = safe_load_json(os.path.join(downloads_dir, fname), max_bytes=MAX_CONFIG_BYTES)
-                        if secret_data:
-                            inst = secret_data.get("installed") or secret_data.get("web", {})
-                            if inst.get("client_id") and inst.get("client_secret"):
-                                client_id = inst["client_id"]
-                                client_secret = inst["client_secret"]
-                                print(f"Found and loaded Google OAuth credentials from: ~/Downloads/{fname}")
-                                break
-                    except Exception:
-                        pass
-
-    if not client_id or not client_secret:
-        print("=" * 60)
-        print("  Omarchy Calendar - Google OAuth2 Setup")
-        print("=" * 60)
-        print("To connect calendars that require your Google login:")
-        print("1. Go to Google Cloud Console: https://console.cloud.google.com/")
-        print("2. Enable the 'Google Calendar API'")
-        print("3. Under Credentials -> Create Credentials -> 'OAuth client ID'")
-        print("   Application type: 'Desktop App'")
-        print("=" * 60)
-        client_id = input("Enter your Google OAuth Client ID: ").strip()
-        client_secret = input("Enter your Google OAuth Client Secret: ").strip()
-
-    if not client_id or not client_secret:
-        print("Error: Client ID and Client Secret are required.")
-        sys.exit(1)
-
+    existing_auth = load_saved_auth()
+    auth_code = None
+    auth_failed = False
     expected_state = secrets.token_urlsafe(32)
 
     auth_url = (
@@ -188,60 +173,80 @@ def main():
         })
     )
 
-    print("\nStarting local authentication server on 127.0.0.1:", PORT, "...")
     server = HTTPServer(("127.0.0.1", PORT), OAuthCallbackHandler)
     server.timeout = 600
-
-    print("Opening browser for authorization...")
-    print("If it does not open automatically, visit:")
-    print(auth_url)
-    print()
-    webbrowser.open(auth_url)
-
-    print("Waiting for authorization in browser (timeout: 10 minutes)...")
-    deadline = time.monotonic() + server.timeout
-    while not auth_code and not auth_failed and time.monotonic() < deadline:
-        server.timeout = max(1, deadline - time.monotonic())
-        server.handle_request()
+    try:
+        print("Opening your browser to sign in to Google.")
+        print("If nothing opens, visit:")
+        print(auth_url)
+        print()
+        print('If Google says it "hasn\'t verified this app", that is your own app:')
+        print("click Advanced, then Go to <your app name>, then Continue.")
+        webbrowser.open(auth_url)
+        print("Waiting for you to finish in the browser (10 minutes max)...")
+        deadline = time.monotonic() + server.timeout
+        while not auth_code and not auth_failed and time.monotonic() < deadline:
+            server.timeout = max(1, deadline - time.monotonic())
+            server.handle_request()
+    finally:
+        server.server_close()
 
     if not auth_code:
-        print("Authentication timed out or failed.")
-        sys.exit(1)
+        raise RuntimeError("Sign-in timed out or was cancelled.")
 
-    print("Authorization code received! Exchanging for tokens...")
     try:
         tokens = exchange_code_for_tokens(client_id, client_secret, auth_code)
-        refresh_token = tokens.get("refresh_token") or existing_auth.get("refresh_token")
-
-        if not refresh_token:
-            print("Error: No refresh token returned. Try removing app access from Google Account and authenticating again.")
-            sys.exit(1)
-
-        auth_data = {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": refresh_token,
-            "access_token": tokens.get("access_token"),
-            "expires_at": int(time.time()) + tokens.get("expires_in", 3600),
-            "updated_at": int(time.time()),
-        }
-
-        backend.stash_secrets(auth_data, backend.GOOGLE_SECRET_FIELDS, secret_id="google")
-        write_secure_json(AUTH_FILE, auth_data, mode=0o600)
-
-        print("\n" + "=" * 60)
-        print("SUCCESS! Google OAuth credentials saved to:")
-        print(f"  {AUTH_FILE}")
-        print("=" * 60)
-        print()
-        print("Tip: if this login stops working after about 7 days, your OAuth app is")
-        print("still in 'Testing' publishing status. In Google Cloud Console open")
-        print("Google Auth Platform -> Audience and click 'Publish app' (In production).")
-        print("Refresh tokens then stop expiring and you will not need to sign in again.")
-
     except Exception as e:
-        print("Failed to exchange tokens:", e)
+        raise RuntimeError(f"Failed to exchange tokens: {e}") from e
+    refresh_token = tokens.get("refresh_token") or existing_auth.get("refresh_token")
+    if not refresh_token:
+        raise RuntimeError("No refresh token returned. Remove the app's access in your Google Account and try again.")
+
+    auth_data = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+        "access_token": tokens.get("access_token"),
+        "expires_at": int(time.time()) + tokens.get("expires_in", 3600),
+        "updated_at": int(time.time()),
+    }
+    backend.stash_secrets(auth_data, backend.GOOGLE_SECRET_FIELDS, secret_id="google")
+    write_secure_json(AUTH_FILE, auth_data, mode=0o600)
+    return auth_data
+
+
+def main():
+    existing_auth = load_saved_auth()
+    client_id = os.environ.get("GOOGLE_CLIENT_ID", "") or existing_auth.get("client_id", "")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "") or existing_auth.get("client_secret", "")
+
+    if len(sys.argv) >= 3:
+        client_id = sys.argv[1].strip()
+        client_secret = sys.argv[2].strip()
+
+    if not client_id or not client_secret:
+        found = find_downloaded_client()
+        if found:
+            client_id, client_secret, fname = found
+            print(f"Found and loaded Google OAuth credentials from: ~/Downloads/{fname}")
+
+    if not client_id or not client_secret:
+        print("No Google client saved yet. Run the guided setup instead:")
+        print(f"  python3 {os.path.join(os.path.dirname(os.path.abspath(__file__)), 'setup.py')}")
         sys.exit(1)
+
+    try:
+        authorize(client_id, client_secret)
+    except RuntimeError as e:
+        print("Error:", e)
+        sys.exit(1)
+    print("\nSUCCESS! Google OAuth credentials saved to:")
+    print(f"  {AUTH_FILE}")
+    print()
+    print("Tip: if this login stops working after about 7 days, your OAuth app is")
+    print("still in 'Testing' publishing status. In Google Cloud Console open")
+    print("Google Auth Platform -> Audience and click 'Publish app' (In production).")
+    print("Refresh tokens then stop expiring and you will not need to sign in again.")
 
 
 if __name__ == "__main__":

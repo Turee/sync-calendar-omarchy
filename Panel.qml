@@ -422,6 +422,12 @@ Panel {
     if (!googleAuthProc.running) googleAuthProc.running = true
   }
 
+  // Guided setup runs in a terminal: it opens the provider's guide page,
+  // asks for the credentials and writes calendars.json, which hot-reloads.
+  function openSetup() {
+    if (!setupProc.running) setupProc.running = true
+  }
+
   // The month on screen. Stepping moves this and nothing else: the grid is
   // a read-out, not a picker, so there is no per-day cursor to keep in sync.
   property int viewYear: today.getFullYear()
@@ -775,10 +781,16 @@ Panel {
 
   Process {
     id: googleAuthProc
-    command: ["python3", Qt.resolvedUrl("google-auth.py").toString().replace(/^file:\/\//, "")]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.syncCalendars(true)
+    command: ["xdg-terminal-exec", "python3", Qt.resolvedUrl("setup.py").toString().replace(/^file:\/\//, ""), "reconnect"]
+    onExited: root.syncCalendars(true)
+  }
+
+  Process {
+    id: setupProc
+    command: ["xdg-terminal-exec", "python3", Qt.resolvedUrl("setup.py").toString().replace(/^file:\/\//, "")]
+    onExited: {
+      configFile.reload()
+      root.syncCalendars(true)
     }
   }
 
@@ -2638,11 +2650,21 @@ Panel {
               PanelActionButton {
                 visible: !root.addingCalendar
                 anchors.verticalCenter: parent.verticalCenter
-                iconText: "󰐕"
-                tooltipText: "Add new calendar"
+                iconText: "󰏫"
+                tooltipText: "Add a feed by hand"
                 foreground: root.contentForeground
                 fontFamily: root.contentFontFamily
                 onClicked: root.startAddingCalendar("url")
+              }
+
+              PanelActionButton {
+                visible: !root.addingCalendar
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "󰐕"
+                tooltipText: "Connect a calendar (guided setup)"
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+                onClicked: root.openSetup()
               }
             }
           }
@@ -3253,7 +3275,7 @@ Panel {
                     textFormat: Text.PlainText
                     id: addFirstBtnText
                     anchors.centerIn: parent
-                    text: "+ Add Your First Calendar"
+                    text: "+ Connect a Calendar"
                     color: Color.background
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.caption
@@ -3263,7 +3285,7 @@ Panel {
                   MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.startAddingCalendar("url")
+                    onClicked: root.openSetup()
                   }
                 }
               }
