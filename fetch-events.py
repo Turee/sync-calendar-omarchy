@@ -51,6 +51,7 @@ MAX_CONFIG_BYTES = 1 * 1024 * 1024  # 1 MB limit for local config files
 MAX_OUTPUT_JSON_BYTES = 25 * 1024 * 1024  # 25 MB limit for generated event state
 MAX_CACHE_BYTES = 2 * MAX_ICAL_BYTES  # one cached feed, JSON-escaped
 MAX_RECURRENCE_ITERATIONS = 2000    # CPU-work ceiling for expanding recurrence rules
+MAX_RECURRENCE_CANDIDATES = 100000  # Day-and-time candidates one rule may produce in total
 MAX_EXPANDED_INSTANCES = 500        # Maximum instances generated per recurring/multiday event
 MAX_FEED_INSTANCES = 20000          # Memory ceiling for one whole feed: the per-event caps multiply
 
@@ -938,6 +939,10 @@ def rrule_occurrences(dtstart, rule, skip_to=None, stop_after=None):
     else:
         yield dtstart
 
+    # The period's set is matched days x times, up to 366 x 86,400. It is never
+    # built: a position maps to its day and time, and each candidate counts
+    # against MAX_RECURRENCE_CANDIDATES.
+    budget = MAX_RECURRENCE_CANDIDATES
     for _ in range(MAX_RECURRENCE_ITERATIONS):
         try:
             days = period_days(k)
@@ -945,10 +950,18 @@ def rrule_occurrences(dtstart, rule, skip_to=None, stop_after=None):
             return  # past year 9999
         if stop_after is not None and days and datetime.combine(days[0], dt_time()) > stop_after:
             return
-        found = [datetime.combine(d, t) for d in days if day_matches(d) for t in times]
+        matched = [d for d in days if day_matches(d)]
+        size = len(matched) * len(times)
         if bysetpos:
-            found = [found[p - 1] for p in sorted(_resolve(bysetpos, len(found))) if 1 <= p <= len(found)]
-        for occurrence in found:
+            positions = sorted(p for p in _resolve(bysetpos, size) if 1 <= p <= size)
+        else:
+            positions = range(1, size + 1)
+        for p in positions:
+            budget -= 1
+            if budget < 0:
+                return
+            day, t = divmod(p - 1, len(times))
+            occurrence = datetime.combine(matched[day], times[t])
             if occurrence > dtstart:
                 yield occurrence
         k += interval
@@ -958,7 +971,7 @@ def rrule_occurrences(dtstart, rule, skip_to=None, stop_after=None):
 def expand_recurring_event(event, window_start, window_end):
     """
     Expands a recurring VEVENT within [window_start, window_end] (local wall time).
-    Bounded by MAX_RECURRENCE_ITERATIONS and MAX_EXPANDED_INSTANCES.
+    Bounded by MAX_RECURRENCE_ITERATIONS, MAX_RECURRENCE_CANDIDATES and MAX_EXPANDED_INSTANCES.
 
     RRULE parts (BYDAY, BYMONTHDAY, the time of day) are defined in DTSTART's own
     zone, so a zoned series is expanded in that zone and each occurrence is then

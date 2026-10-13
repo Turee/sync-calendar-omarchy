@@ -353,6 +353,23 @@ class RecurrenceCpuCeilingTests(unittest.TestCase):
         for inst in instances:
             self.assertTrue(window_start <= inst["start_dt"] <= window_end)
 
+    def test_every_second_of_the_year_is_never_built_in_memory(self):
+        # 366 days x 86,400 times = 31 million candidates in one YEARLY period.
+        every_second = ("FREQ=YEARLY;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYHOUR=" + ",".join(map(str, range(24)))
+                        + ";BYMINUTE=" + ",".join(map(str, range(60)))
+                        + ";BYSECOND=" + ",".join(map(str, range(60))))
+        event = {"start_dt": fetch_events.datetime(2025, 1, 1), "end_dt": fetch_events.datetime(2025, 1, 1),
+                 "rrule": fetch_events.parse_rrule(every_second + ";BYSETPOS=1,-1"), "exdates": []}
+        window_start, window_end = fetch_events.datetime(2026, 1, 1), fetch_events.datetime(2027, 12, 31, 23, 59, 59)
+        got = [i["start_dt"] for i in fetch_events.expand_rrule_in_wall_time(event, window_start, window_end)]
+        self.assertEqual(got, [fetch_events.datetime(2026, 1, 1), fetch_events.datetime(2026, 12, 31, 23, 59, 59),
+                               fetch_events.datetime(2027, 1, 1), fetch_events.datetime(2027, 12, 31, 23, 59, 59)])
+
+        # Without BYSETPOS every candidate is an occurrence: the candidate
+        # ceiling ends the walk long before the window.
+        event["rrule"] = fetch_events.parse_rrule(every_second)
+        self.assertEqual(fetch_events.expand_rrule_in_wall_time(event, window_start, window_end), [])
+
     def test_weekly_recurrence_from_distant_past_terminates_under_cpu_ceiling(self):
         window_start = fetch_events.datetime(2026, 8, 1)
         window_end = fetch_events.datetime(2026, 8, 31)
