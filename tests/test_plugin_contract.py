@@ -58,6 +58,23 @@ class ShippedSourceContractTests(unittest.TestCase):
                 line = text.count("\n", 0, match.start()) + 1
                 self.fail(f"{path.relative_to(ROOT)}:{line} has a merge conflict marker")
 
+    def test_text_fields_exist_only_while_their_form_is_open(self):
+        # A TextField follows every clipboard change while it exists, and the
+        # panel lives as long as the shell. Each one must sit in a Loader's
+        # sourceComponent, so it is created when its form opens.
+        for path in sorted(ROOT.glob("*.qml")):
+            open_blocks = []  # brace depth at which each sourceComponent opened
+            depth = 0
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                code = re.sub(r"(^|\s)//.*", "", line)  # a comment, not the // of a URL
+                if "sourceComponent:" in code and "{" in code:
+                    open_blocks.append(depth)
+                if re.search(r"\b(TextField|TextInput|TextEdit|TextArea)\s*\{", code) and not open_blocks:
+                    self.fail(f"{path.name}:{number} creates a text input outside a Loader")
+                depth += code.count("{") - code.count("}")
+                while open_blocks and depth <= open_blocks[-1]:
+                    open_blocks.pop()
+
 
 if __name__ == "__main__":
     unittest.main()

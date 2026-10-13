@@ -686,10 +686,12 @@ Panel {
   function startEditingLife() {
     root.editingLife = true
     Qt.callLater(function() {
-      bornField.text = root.birthYear > 0 ? String(root.birthYear) : ""
-      expectancyField.text = String(root.lifeExpectancy)
-      bornField.selectAll()
-      bornField.forceActiveFocus()
+      var editor = lifeEditor.item
+      if (!editor) return
+      editor.bornInput.text = root.birthYear > 0 ? String(root.birthYear) : ""
+      editor.spanInput.text = String(root.lifeExpectancy)
+      editor.bornInput.selectAll()
+      editor.bornInput.forceActiveFocus()
     })
   }
 
@@ -723,8 +725,10 @@ Panel {
   }
 
   function commitLife() {
-    var born = Model.parseBirthYear(bornField.text, today.getFullYear())
-    var span = Model.parseLifeExpectancy(expectancyField.text)
+    var editor = lifeEditor.item
+    if (!editor) return
+    var born = Model.parseBirthYear(editor.bornInput.text, today.getFullYear())
+    var span = Model.parseLifeExpectancy(editor.spanInput.text)
     if (born !== root.birthYear || span !== root.lifeExpectancy)
       persistSettings({ birthYear: born, lifeExpectancy: span })
     cancelEditingLife()
@@ -843,18 +847,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      readonly property bool hasActiveInput: (bornField && bornField.activeFocus) ||
-                                            (expectancyField && expectancyField.activeFocus) ||
-                                            (calNameInput && calNameInput.activeFocus) ||
-                                            (calAddressInput && calAddressInput.activeFocus) ||
-                                            (calJmapUrlInput && calJmapUrlInput.activeFocus) ||
-                                            (calJmapTokenInput && calJmapTokenInput.activeFocus) ||
-                                            (eventTitleInput && eventTitleInput.activeFocus) ||
-                                            (eventDateInput && eventDateInput.activeFocus) ||
-                                            (eventStartInput && eventStartInput.activeFocus) ||
-                                            (eventEndInput && eventEndInput.activeFocus) ||
-                                            (eventLocInput && eventLocInput.activeFocus) ||
-                                            (eventDescInput && eventDescInput.activeFocus)
+      readonly property bool hasActiveInput: lifeEditor.activeFocus || eventForm.activeFocus || calendarForm.activeFocus
       blocked: root.editingLife || hasActiveInput
       onMoveRequested: function(dx, dy) {
         if (dx !== 0) root.moveSelectedDay(dx)
@@ -1016,56 +1009,63 @@ Panel {
                 onDoubleTapped: root.startEditingLife()
               }
 
-              Row {
-                visible: root.editingLife
+              // Each group of TextFields is loaded only while its form is open: a
+              // TextField follows every clipboard change for as long as it exists.
+              Loader {
+                id: lifeEditor
+                active: root.editingLife
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(10)
+                sourceComponent: Row {
+                  property alias bornInput: bornField
+                  property alias spanInput: expectancyField
+                  spacing: Style.space(10)
 
-                Text {
-                  textFormat: Text.PlainText
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: "BORN"
-                  color: Qt.darker(root.contentForeground, 1.5)
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.letterSpacing: 1
-                }
+                  Text {
+                    textFormat: Text.PlainText
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "BORN"
+                    color: Qt.darker(root.contentForeground, 1.5)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.letterSpacing: 1
+                  }
 
-                TextField {
-                  id: bornField
-                  width: Style.space(70)
-                  anchors.verticalCenter: parent.verticalCenter
-                  placeholderText: "year"
-                  foreground: root.contentForeground
-                  font.family: root.contentFontFamily
-                  inputMethodHints: Qt.ImhDigitsOnly
+                  TextField {
+                    id: bornField
+                    width: Style.space(70)
+                    anchors.verticalCenter: parent.verticalCenter
+                    placeholderText: "year"
+                    foreground: root.contentForeground
+                    font.family: root.contentFontFamily
+                    inputMethodHints: Qt.ImhDigitsOnly
 
-                  Keys.onPressed: function(event) { root.handleLifeKey(event, expectancyField) }
-                }
+                    Keys.onPressed: function(event) { root.handleLifeKey(event, expectancyField) }
+                  }
 
-                Text {
-                  textFormat: Text.PlainText
-                  anchors.verticalCenter: parent.verticalCenter
-                  anchors.verticalCenterOffset: 0
-                  leftPadding: Style.space(6)
-                  text: "LIVE TO"
-                  color: Qt.darker(root.contentForeground, 1.5)
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.letterSpacing: 1
-                }
+                  Text {
+                    textFormat: Text.PlainText
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.verticalCenterOffset: 0
+                    leftPadding: Style.space(6)
+                    text: "LIVE TO"
+                    color: Qt.darker(root.contentForeground, 1.5)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.letterSpacing: 1
+                  }
 
-                TextField {
-                  id: expectancyField
-                  width: Style.space(60)
-                  anchors.verticalCenter: parent.verticalCenter
-                  placeholderText: "90"
-                  foreground: root.contentForeground
-                  font.family: root.contentFontFamily
-                  inputMethodHints: Qt.ImhDigitsOnly
+                  TextField {
+                    id: expectancyField
+                    width: Style.space(60)
+                    anchors.verticalCenter: parent.verticalCenter
+                    placeholderText: "90"
+                    foreground: root.contentForeground
+                    font.family: root.contentFontFamily
+                    inputMethodHints: Qt.ImhDigitsOnly
 
-                  Keys.onPressed: function(event) { root.handleLifeKey(event, bornField) }
+                    Keys.onPressed: function(event) { root.handleLifeKey(event, bornField) }
+                  }
                 }
               }
 
@@ -1863,323 +1863,326 @@ Panel {
             Rectangle {
               visible: root.addingEvent
               width: parent.width
-              height: visible ? (addEventFormCol.implicitHeight + Style.space(20)) : 0
+              height: visible ? (eventForm.height + Style.space(20)) : 0
               radius: Style.cornerRadius
               color: Style.hoverFillFor(root.contentForeground, Color.accent)
               border.width: 1
               border.color: Color.accent
 
-              Column {
-                id: addEventFormCol
+              Loader {
+                id: eventForm
+                active: root.addingEvent
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.margins: Style.space(10)
-                spacing: Style.space(8)
+                sourceComponent: Column {
+                  spacing: Style.space(8)
 
-                // Form Header
-                Row {
-                  width: parent.width
-                  Item {
-                    width: parent.width - Style.space(24)
-                    height: Style.space(20)
-                    Row {
-                      anchors.verticalCenter: parent.verticalCenter
-                      spacing: Style.space(6)
-                      Text {
-                        textFormat: Text.PlainText
-                        text: root.editingEvent ? "EDIT EVENT" : "NEW EVENT"
-                        color: Color.accent
-                        font.family: root.contentFontFamily
-                        font.pixelSize: Style.font.caption
-                        font.bold: true
-                        font.letterSpacing: 1
-                      }
-                      Text {
-                        textFormat: Text.PlainText
-                        text: "· " + (root.editingEvent ? root.eventCalendar : root.eventDate)
-                        color: Qt.darker(root.contentForeground, 1.6)
-                        font.family: root.contentFontFamily
-                        font.pixelSize: Style.font.caption
-                      }
-                    }
-                  }
-                  PanelActionButton {
-                    anchors.verticalCenter: parent.verticalCenter
-                    iconText: "󰅖"
-                    tooltipText: "Close form (Esc)"
-                    foreground: root.contentForeground
-                    fontFamily: root.contentFontFamily
-                    onClicked: root.closeAddEvent()
-                  }
-                }
-
-                // Title Input
-                TextField {
-                  id: eventTitleInput
-                  width: parent.width
-                  placeholderText: "Title, or a sentence: Lunch tomorrow 1pm-2pm"
-                  text: root.eventTitle
-                  foreground: root.contentForeground
-                  font.family: root.contentFontFamily
-                  onTextChanged: root.eventTitle = text
-                  // Enter or leaving the field reads dates and times out of it.
-                  onEditingFinished: root.applyQuickAdd()
-                }
-
-                // Date Input
-                TextField {
-                  id: eventDateInput
-                  width: Style.space(110)
-                  placeholderText: "YYYY-MM-DD"
-                  text: root.eventDate
-                  foreground: root.contentForeground
-                  font.family: root.contentFontFamily
-                  onTextChanged: root.eventDate = text
-                }
-
-                // Calendar Selector Row (an edited event stays on its calendar)
-                Column {
-                  visible: !root.editingEvent
-                  width: parent.width
-                  spacing: Style.space(4)
-                  Text {
-                    textFormat: Text.PlainText
-                    text: "TARGET CALENDAR:"
-                    color: Qt.darker(root.contentForeground, 1.7)
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: true
-                  }
-                  Row {
-                    spacing: Style.space(6)
-                    Repeater {
-                      model: root.writableCalendars
-                      Rectangle {
-                        required property var modelData
-                        readonly property bool isSelected: root.eventCalendar === modelData.name
-                        width: calPillRow.implicitWidth + Style.space(14)
-                        height: Style.space(22)
-                        radius: Style.cornerRadius > 0 ? height / 2 : 0
-                        color: isSelected ? Qt.rgba(modelData.color.r, modelData.color.g, modelData.color.b, 0.25) : "transparent"
-                        border.width: 1
-                        border.color: isSelected ? modelData.color : Qt.darker(root.contentForeground, 1.8)
-
-                        Row {
-                          id: calPillRow
-                          anchors.centerIn: parent
-                          spacing: Style.space(5)
-                          Rectangle {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: Style.space(6)
-                            height: Style.space(6)
-                            radius: 3
-                            color: modelData.color || Color.accent
-                          }
-                          Text {
-                            textFormat: Text.PlainText
-                            text: modelData.name
-                            color: isSelected ? root.contentForeground : Qt.darker(root.contentForeground, 1.4)
-                            font.family: root.contentFontFamily
-                            font.pixelSize: Style.font.caption
-                            font.bold: isSelected
-                          }
-                        }
-
-                        MouseArea {
-                          anchors.fill: parent
-                          cursorShape: Qt.PointingHandCursor
-                          onClicked: root.eventCalendar = modelData.name
-                        }
-                      }
-                    }
-                  }
-                }
-
-                // Time / Duration Row
-                Column {
-                  width: parent.width
-                  spacing: Style.space(4)
-
+                  // Form Header
                   Row {
                     width: parent.width
-                    spacing: Style.space(8)
-
-                    // All Day Toggle
-                    ChoicePill {
-                      height: Style.space(24)
-                      text: "All Day"
-                      selected: root.eventAllDay
+                    Item {
+                      width: parent.width - Style.space(24)
+                      height: Style.space(20)
+                      Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Style.space(6)
+                        Text {
+                          textFormat: Text.PlainText
+                          text: root.editingEvent ? "EDIT EVENT" : "NEW EVENT"
+                          color: Color.accent
+                          font.family: root.contentFontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                          font.letterSpacing: 1
+                        }
+                        Text {
+                          textFormat: Text.PlainText
+                          text: "· " + (root.editingEvent ? root.eventCalendar : root.eventDate)
+                          color: Qt.darker(root.contentForeground, 1.6)
+                          font.family: root.contentFontFamily
+                          font.pixelSize: Style.font.caption
+                        }
+                      }
+                    }
+                    PanelActionButton {
+                      anchors.verticalCenter: parent.verticalCenter
+                      iconText: "󰅖"
+                      tooltipText: "Close form (Esc)"
                       foreground: root.contentForeground
                       fontFamily: root.contentFontFamily
-                      onClicked: root.eventAllDay = !root.eventAllDay
+                      onClicked: root.closeAddEvent()
                     }
+                  }
 
-                    // Start Time Input
-                    TextField {
-                      id: eventStartInput
-                      visible: !root.eventAllDay
-                      width: Style.space(70)
-                      placeholderText: "09:00"
-                      text: root.eventStartTime
-                      foreground: root.contentForeground
-                      font.family: root.contentFontFamily
-                      onTextChanged: root.eventStartTime = text
-                    }
+                  // Title Input
+                  TextField {
+                    id: eventTitleInput
+                    width: parent.width
+                    placeholderText: "Title, or a sentence: Lunch tomorrow 1pm-2pm"
+                    text: root.eventTitle
+                    foreground: root.contentForeground
+                    font.family: root.contentFontFamily
+                    onTextChanged: root.eventTitle = text
+                    // Enter or leaving the field reads dates and times out of it.
+                    onEditingFinished: root.applyQuickAdd()
+                  }
 
+                  // Date Input
+                  TextField {
+                    id: eventDateInput
+                    width: Style.space(110)
+                    placeholderText: "YYYY-MM-DD"
+                    text: root.eventDate
+                    foreground: root.contentForeground
+                    font.family: root.contentFontFamily
+                    onTextChanged: root.eventDate = text
+                  }
+
+                  // Calendar Selector Row (an edited event stays on its calendar)
+                  Column {
+                    visible: !root.editingEvent
+                    width: parent.width
+                    spacing: Style.space(4)
                     Text {
-                      visible: !root.eventAllDay
                       textFormat: Text.PlainText
-                      anchors.verticalCenter: parent.verticalCenter
-                      text: "–"
-                      color: Qt.darker(root.contentForeground, 1.6)
+                      text: "TARGET CALENDAR:"
+                      color: Qt.darker(root.contentForeground, 1.7)
                       font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
                     }
-
-                    // End Time Input
-                    TextField {
-                      id: eventEndInput
-                      visible: !root.eventAllDay
-                      width: Style.space(70)
-                      placeholderText: "10:00"
-                      text: root.eventEndTime
-                      foreground: root.contentForeground
-                      font.family: root.contentFontFamily
-                      onTextChanged: root.eventEndTime = text
-                    }
-
-                    // Quick duration presets
                     Row {
-                      visible: !root.eventAllDay
-                      spacing: Style.space(4)
-                      anchors.verticalCenter: parent.verticalCenter
-
+                      spacing: Style.space(6)
                       Repeater {
-                        model: [
-                          { label: "30m", minutes: 30 },
-                          { label: "1h", minutes: 60 },
-                          { label: "2h", minutes: 120 }
-                        ]
-
+                        model: root.writableCalendars
                         Rectangle {
                           required property var modelData
-                          width: durText.implicitWidth + Style.space(10)
-                          height: Style.space(20)
+                          readonly property bool isSelected: root.eventCalendar === modelData.name
+                          width: calPillRow.implicitWidth + Style.space(14)
+                          height: Style.space(22)
                           radius: Style.cornerRadius > 0 ? height / 2 : 0
-                          color: "transparent"
+                          color: isSelected ? Qt.rgba(modelData.color.r, modelData.color.g, modelData.color.b, 0.25) : "transparent"
                           border.width: 1
-                          border.color: Qt.darker(root.contentForeground, 1.8)
+                          border.color: isSelected ? modelData.color : Qt.darker(root.contentForeground, 1.8)
 
-                          Text {
-                            textFormat: Text.PlainText
-                            id: durText
+                          Row {
+                            id: calPillRow
                             anchors.centerIn: parent
-                            text: modelData.label
-                            color: Qt.darker(root.contentForeground, 1.4)
-                            font.family: root.contentFontFamily
-                            font.pixelSize: 10
+                            spacing: Style.space(5)
+                            Rectangle {
+                              anchors.verticalCenter: parent.verticalCenter
+                              width: Style.space(6)
+                              height: Style.space(6)
+                              radius: 3
+                              color: modelData.color || Color.accent
+                            }
+                            Text {
+                              textFormat: Text.PlainText
+                              text: modelData.name
+                              color: isSelected ? root.contentForeground : Qt.darker(root.contentForeground, 1.4)
+                              font.family: root.contentFontFamily
+                              font.pixelSize: Style.font.caption
+                              font.bold: isSelected
+                            }
                           }
 
                           MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.setEventDuration(modelData.minutes)
+                            onClicked: root.eventCalendar = modelData.name
                           }
                         }
                       }
                     }
                   }
-                }
 
-                // Location / URL Input
-                TextField {
-                  id: eventLocInput
-                  width: parent.width
-                  placeholderText: "Location or Video Meeting URL (optional)"
-                  text: root.eventLocation
-                  foreground: root.contentForeground
-                  font.family: root.contentFontFamily
-                  onTextChanged: root.eventLocation = text
-                }
+                  // Time / Duration Row
+                  Column {
+                    width: parent.width
+                    spacing: Style.space(4)
 
-                // Description Input
-                TextField {
-                  id: eventDescInput
-                  width: parent.width
-                  placeholderText: "Description / Notes (optional)"
-                  text: root.eventDescription
-                  foreground: root.contentForeground
-                  font.family: root.contentFontFamily
-                  onTextChanged: root.eventDescription = text
-                }
+                    Row {
+                      width: parent.width
+                      spacing: Style.space(8)
 
-                // Error Message if any
-                Text {
-                  visible: root.eventErrorMessage.length > 0
-                  textFormat: Text.PlainText
-                  text: root.eventErrorMessage
-                  color: "#f38ba8"
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                }
+                      // All Day Toggle
+                      ChoicePill {
+                        height: Style.space(24)
+                        text: "All Day"
+                        selected: root.eventAllDay
+                        foreground: root.contentForeground
+                        fontFamily: root.contentFontFamily
+                        onClicked: root.eventAllDay = !root.eventAllDay
+                      }
 
-                // Action Buttons
-                Row {
-                  anchors.right: parent.right
-                  spacing: Style.space(8)
+                      // Start Time Input
+                      TextField {
+                        id: eventStartInput
+                        visible: !root.eventAllDay
+                        width: Style.space(70)
+                        placeholderText: "09:00"
+                        text: root.eventStartTime
+                        foreground: root.contentForeground
+                        font.family: root.contentFontFamily
+                        onTextChanged: root.eventStartTime = text
+                      }
 
-                  Rectangle {
-                    width: cancelEventBtnText.implicitWidth + Style.space(16)
-                    height: Style.space(26)
-                    radius: Style.cornerRadius
-                    color: cancelEvtMouse.containsMouse ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent"
+                      Text {
+                        visible: !root.eventAllDay
+                        textFormat: Text.PlainText
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "–"
+                        color: Qt.darker(root.contentForeground, 1.6)
+                        font.family: root.contentFontFamily
+                      }
 
-                    Text {
-                      textFormat: Text.PlainText
-                      id: cancelEventBtnText
-                      anchors.centerIn: parent
-                      text: "Cancel"
-                      color: Qt.darker(root.contentForeground, 1.5)
-                      font.family: root.contentFontFamily
-                      font.pixelSize: Style.font.caption
-                    }
+                      // End Time Input
+                      TextField {
+                        id: eventEndInput
+                        visible: !root.eventAllDay
+                        width: Style.space(70)
+                        placeholderText: "10:00"
+                        text: root.eventEndTime
+                        foreground: root.contentForeground
+                        font.family: root.contentFontFamily
+                        onTextChanged: root.eventEndTime = text
+                      }
 
-                    MouseArea {
-                      id: cancelEvtMouse
-                      anchors.fill: parent
-                      cursorShape: Qt.PointingHandCursor
-                      onClicked: root.closeAddEvent()
+                      // Quick duration presets
+                      Row {
+                        visible: !root.eventAllDay
+                        spacing: Style.space(4)
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Repeater {
+                          model: [
+                            { label: "30m", minutes: 30 },
+                            { label: "1h", minutes: 60 },
+                            { label: "2h", minutes: 120 }
+                          ]
+
+                          Rectangle {
+                            required property var modelData
+                            width: durText.implicitWidth + Style.space(10)
+                            height: Style.space(20)
+                            radius: Style.cornerRadius > 0 ? height / 2 : 0
+                            color: "transparent"
+                            border.width: 1
+                            border.color: Qt.darker(root.contentForeground, 1.8)
+
+                            Text {
+                              textFormat: Text.PlainText
+                              id: durText
+                              anchors.centerIn: parent
+                              text: modelData.label
+                              color: Qt.darker(root.contentForeground, 1.4)
+                              font.family: root.contentFontFamily
+                              font.pixelSize: 10
+                            }
+
+                            MouseArea {
+                              anchors.fill: parent
+                              cursorShape: Qt.PointingHandCursor
+                              onClicked: root.setEventDuration(modelData.minutes)
+                            }
+                          }
+                        }
+                      }
                     }
                   }
 
-                  Rectangle {
-                    width: submitEventBtnText.implicitWidth + Style.space(16)
-                    height: Style.space(26)
-                    radius: Style.cornerRadius
-                    color: Color.accent
-                    opacity: (root.eventTitle.trim() && !root.eventSubmitting) ? 1.0 : 0.4
+                  // Location / URL Input
+                  TextField {
+                    id: eventLocInput
+                    width: parent.width
+                    placeholderText: "Location or Video Meeting URL (optional)"
+                    text: root.eventLocation
+                    foreground: root.contentForeground
+                    font.family: root.contentFontFamily
+                    onTextChanged: root.eventLocation = text
+                  }
 
-                    Row {
-                      anchors.centerIn: parent
-                      spacing: Style.space(4)
+                  // Description Input
+                  TextField {
+                    id: eventDescInput
+                    width: parent.width
+                    placeholderText: "Description / Notes (optional)"
+                    text: root.eventDescription
+                    foreground: root.contentForeground
+                    font.family: root.contentFontFamily
+                    onTextChanged: root.eventDescription = text
+                  }
+
+                  // Error Message if any
+                  Text {
+                    visible: root.eventErrorMessage.length > 0
+                    textFormat: Text.PlainText
+                    text: root.eventErrorMessage
+                    color: "#f38ba8"
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+
+                  // Action Buttons
+                  Row {
+                    anchors.right: parent.right
+                    spacing: Style.space(8)
+
+                    Rectangle {
+                      width: cancelEventBtnText.implicitWidth + Style.space(16)
+                      height: Style.space(26)
+                      radius: Style.cornerRadius
+                      color: cancelEvtMouse.containsMouse ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent"
 
                       Text {
                         textFormat: Text.PlainText
-                        id: submitEventBtnText
-                        text: root.eventSubmitting ? "Saving..." : (root.editingEvent ? "Save Changes" : "Save Event")
-                        color: Color.background
+                        id: cancelEventBtnText
+                        anchors.centerIn: parent
+                        text: "Cancel"
+                        color: Qt.darker(root.contentForeground, 1.5)
                         font.family: root.contentFontFamily
                         font.pixelSize: Style.font.caption
-                        font.bold: true
+                      }
+
+                      MouseArea {
+                        id: cancelEvtMouse
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.closeAddEvent()
                       }
                     }
 
-                    MouseArea {
-                      anchors.fill: parent
-                      enabled: root.eventTitle.trim() && !root.eventSubmitting
-                      cursorShape: Qt.PointingHandCursor
-                      onClicked: root.submitEvent()
+                    Rectangle {
+                      width: submitEventBtnText.implicitWidth + Style.space(16)
+                      height: Style.space(26)
+                      radius: Style.cornerRadius
+                      color: Color.accent
+                      opacity: (root.eventTitle.trim() && !root.eventSubmitting) ? 1.0 : 0.4
+
+                      Row {
+                        anchors.centerIn: parent
+                        spacing: Style.space(4)
+
+                        Text {
+                          textFormat: Text.PlainText
+                          id: submitEventBtnText
+                          text: root.eventSubmitting ? "Saving..." : (root.editingEvent ? "Save Changes" : "Save Event")
+                          color: Color.background
+                          font.family: root.contentFontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                        }
+                      }
+
+                      MouseArea {
+                        anchors.fill: parent
+                        enabled: root.eventTitle.trim() && !root.eventSubmitting
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.submitEvent()
+                      }
                     }
                   }
                 }
@@ -2783,301 +2786,304 @@ Panel {
 
             anchors.horizontalCenter: parent.horizontalCenter
             width: parent.width
-            height: addFormCol.implicitHeight + Style.space(20)
+            height: calendarForm.height + Style.space(20)
             radius: Style.cornerRadius
             color: Style.hoverFillFor(root.contentForeground, Color.accent)
             border.width: Style.spacing.hairline
             border.color: Style.normalBorderFor(root.contentForeground, Color.accent)
 
-            Column {
-              id: addFormCol
+            Loader {
+              id: calendarForm
+              active: root.addingCalendar
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.top: parent.top
               anchors.margins: Style.space(12)
-              spacing: Style.space(8)
-
-              Text {
-                textFormat: Text.PlainText
-                text: "NEW CALENDAR FEED"
-                color: root.contentForeground
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1
-              }
-
-              // Type Selector: iCal URL vs Google API ID vs JMAP
-              Row {
+              sourceComponent: Column {
                 spacing: Style.space(8)
 
-                Rectangle {
-                  width: typeUrlText.implicitWidth + Style.space(14)
-                  height: Style.space(24)
-                  radius: Style.cornerRadius
-                  color: root.formType === "url" ? Color.accent : "transparent"
-                  border.width: root.formType === "url" ? 0 : Style.spacing.hairline
-                  border.color: Qt.darker(root.contentForeground, 1.8)
-
-                  Text {
-                    textFormat: Text.PlainText
-                    id: typeUrlText
-                    anchors.centerIn: parent
-                    text: "iCal / Webcal URL"
-                    color: root.formType === "url" ? Color.background : root.contentForeground
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: root.formType === "url"
-                  }
-
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                      root.formType = "url"
-                      root.formColor = "#4285f4"
-                    }
-                  }
+                Text {
+                  textFormat: Text.PlainText
+                  text: "NEW CALENDAR FEED"
+                  color: root.contentForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  font.letterSpacing: 1
                 }
 
-                Rectangle {
-                  width: typeGoogleText.implicitWidth + Style.space(14)
-                  height: Style.space(24)
-                  radius: Style.cornerRadius
-                  color: root.formType === "googleId" ? Color.accent : "transparent"
-                  border.width: root.formType === "googleId" ? 0 : Style.spacing.hairline
-                  border.color: Qt.darker(root.contentForeground, 1.8)
-
-                  Text {
-                    textFormat: Text.PlainText
-                    id: typeGoogleText
-                    anchors.centerIn: parent
-                    text: "Google Calendar ID"
-                    color: root.formType === "googleId" ? Color.background : root.contentForeground
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: root.formType === "googleId"
-                  }
-
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                      root.formType = "googleId"
-                      root.formColor = "#e01b24"
-                    }
-                  }
-                }
-
-                Rectangle {
-                  width: typeJmapText.implicitWidth + Style.space(14)
-                  height: Style.space(24)
-                  radius: Style.cornerRadius
-                  color: root.formType === "jmap" ? Color.accent : "transparent"
-                  border.width: root.formType === "jmap" ? 0 : Style.spacing.hairline
-                  border.color: Qt.darker(root.contentForeground, 1.8)
-
-                  Text {
-                    textFormat: Text.PlainText
-                    id: typeJmapText
-                    anchors.centerIn: parent
-                    text: "JMAP"
-                    color: root.formType === "jmap" ? Color.background : root.contentForeground
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: root.formType === "jmap"
-                  }
-
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                      root.formType = "jmap"
-                      root.formColor = "#ff7700"
-                    }
-                  }
-                }
-
-                Rectangle {
-                  width: typeLocalText.implicitWidth + Style.space(14)
-                  height: Style.space(24)
-                  radius: Style.cornerRadius
-                  color: root.formType === "local" ? Color.accent : "transparent"
-                  border.width: root.formType === "local" ? 0 : Style.spacing.hairline
-                  border.color: Qt.darker(root.contentForeground, 1.8)
-
-                  Text {
-                    textFormat: Text.PlainText
-                    id: typeLocalText
-                    anchors.centerIn: parent
-                    text: "Local Offline"
-                    color: root.formType === "local" ? Color.background : root.contentForeground
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: root.formType === "local"
-                  }
-
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                      root.formType = "local"
-                      root.formColor = "#a6e3a1"
-                    }
-                  }
-                }
-              }
-
-              // Name Field
-              TextField {
-                id: calNameInput
-                width: parent.width
-                placeholderText: "Calendar Name (e.g. Personal, Proton, Local Work)"
-                text: root.formName
-                foreground: root.contentForeground
-                font.family: root.contentFontFamily
-                onTextChanged: root.formName = text
-              }
-
-              // JMAP Session URL Field (JMAP only)
-              TextField {
-                id: calJmapUrlInput
-                visible: root.formType === "jmap"
-                width: parent.width
-                placeholderText: "Session URL (default: https://api.fastmail.com/jmap/session)"
-                text: root.formJmapUrl
-                foreground: root.contentForeground
-                font.family: root.contentFontFamily
-                onTextChanged: root.formJmapUrl = text
-              }
-
-              // JMAP Token Field (JMAP only)
-              TextField {
-                id: calJmapTokenInput
-                visible: root.formType === "jmap"
-                width: parent.width
-                placeholderText: "JMAP API / Bearer Token"
-                password: true
-                text: root.formJmapToken
-                foreground: root.contentForeground
-                font.family: root.contentFontFamily
-                onTextChanged: root.formJmapToken = text
-              }
-
-              // Address / ID Field (not needed for Local)
-              TextField {
-                id: calAddressInput
-                visible: root.formType !== "local"
-                width: parent.width
-                placeholderText: root.formType === "googleId"
-                  ? "Google Calendar ID (e.g. xyz@group.calendar.google.com)"
-                  : (root.formType === "jmap"
-                     ? "Calendar ID (optional, leave blank for all)"
-                     : "iCal URL (Google, Apple, Proton .ics link)")
-                text: root.formAddress
-                foreground: root.contentForeground
-                font.family: root.contentFontFamily
-                onTextChanged: root.formAddress = text
-              }
-
-
-              // Color picker row
-              Row {
-                width: parent.width
-                spacing: Style.space(12)
-
+                // Type Selector: iCal URL vs Google API ID vs JMAP
                 Row {
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(6)
+                  spacing: Style.space(8)
 
-                  Text {
-                    textFormat: Text.PlainText
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Color:"
-                    color: Qt.darker(root.contentForeground, 1.5)
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
+                  Rectangle {
+                    width: typeUrlText.implicitWidth + Style.space(14)
+                    height: Style.space(24)
+                    radius: Style.cornerRadius
+                    color: root.formType === "url" ? Color.accent : "transparent"
+                    border.width: root.formType === "url" ? 0 : Style.spacing.hairline
+                    border.color: Qt.darker(root.contentForeground, 1.8)
+
+                    Text {
+                      textFormat: Text.PlainText
+                      id: typeUrlText
+                      anchors.centerIn: parent
+                      text: "iCal / Webcal URL"
+                      color: root.formType === "url" ? Color.background : root.contentForeground
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: root.formType === "url"
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: {
+                        root.formType = "url"
+                        root.formColor = "#4285f4"
+                      }
+                    }
                   }
 
-                  Repeater {
-                    model: Model.CALENDAR_COLORS
-                    Rectangle {
-                      required property var modelData
-                      width: Style.space(16)
-                      height: Style.space(16)
-                      radius: width / 2
-                      color: modelData
-                      border.width: root.formColor === modelData ? 2 : 0
-                      border.color: root.contentForeground
+                  Rectangle {
+                    width: typeGoogleText.implicitWidth + Style.space(14)
+                    height: Style.space(24)
+                    radius: Style.cornerRadius
+                    color: root.formType === "googleId" ? Color.accent : "transparent"
+                    border.width: root.formType === "googleId" ? 0 : Style.spacing.hairline
+                    border.color: Qt.darker(root.contentForeground, 1.8)
 
-                      MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.formColor = modelData
+                    Text {
+                      textFormat: Text.PlainText
+                      id: typeGoogleText
+                      anchors.centerIn: parent
+                      text: "Google Calendar ID"
+                      color: root.formType === "googleId" ? Color.background : root.contentForeground
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: root.formType === "googleId"
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: {
+                        root.formType = "googleId"
+                        root.formColor = "#e01b24"
+                      }
+                    }
+                  }
+
+                  Rectangle {
+                    width: typeJmapText.implicitWidth + Style.space(14)
+                    height: Style.space(24)
+                    radius: Style.cornerRadius
+                    color: root.formType === "jmap" ? Color.accent : "transparent"
+                    border.width: root.formType === "jmap" ? 0 : Style.spacing.hairline
+                    border.color: Qt.darker(root.contentForeground, 1.8)
+
+                    Text {
+                      textFormat: Text.PlainText
+                      id: typeJmapText
+                      anchors.centerIn: parent
+                      text: "JMAP"
+                      color: root.formType === "jmap" ? Color.background : root.contentForeground
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: root.formType === "jmap"
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: {
+                        root.formType = "jmap"
+                        root.formColor = "#ff7700"
+                      }
+                    }
+                  }
+
+                  Rectangle {
+                    width: typeLocalText.implicitWidth + Style.space(14)
+                    height: Style.space(24)
+                    radius: Style.cornerRadius
+                    color: root.formType === "local" ? Color.accent : "transparent"
+                    border.width: root.formType === "local" ? 0 : Style.spacing.hairline
+                    border.color: Qt.darker(root.contentForeground, 1.8)
+
+                    Text {
+                      textFormat: Text.PlainText
+                      id: typeLocalText
+                      anchors.centerIn: parent
+                      text: "Local Offline"
+                      color: root.formType === "local" ? Color.background : root.contentForeground
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: root.formType === "local"
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: {
+                        root.formType = "local"
+                        root.formColor = "#a6e3a1"
                       }
                     }
                   }
                 }
 
-              }
-
-              // Form Action Buttons
-              Row {
-                anchors.right: parent.right
-                spacing: Style.space(8)
-
-                Rectangle {
-                  width: cancelBtnText.implicitWidth + Style.space(16)
-                  height: Style.space(26)
-                  radius: Style.cornerRadius
-                  color: cancelMouse.containsMouse ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent"
-
-                  Text {
-                    textFormat: Text.PlainText
-                    id: cancelBtnText
-                    anchors.centerIn: parent
-                    text: "Cancel"
-                    color: Qt.darker(root.contentForeground, 1.5)
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-
-                  MouseArea {
-                    id: cancelMouse
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.addingCalendar = false
-                  }
+                // Name Field
+                TextField {
+                  id: calNameInput
+                  width: parent.width
+                  placeholderText: "Calendar Name (e.g. Personal, Proton, Local Work)"
+                  text: root.formName
+                  foreground: root.contentForeground
+                  font.family: root.contentFontFamily
+                  onTextChanged: root.formName = text
                 }
 
-                Rectangle {
-                  readonly property bool isFormValid: root.formType === "local"
-                    ? Boolean(root.formName.trim())
-                    : (root.formType === "jmap"
-                       ? Boolean(root.formName.trim() && root.formJmapToken.trim())
-                       : Boolean(root.formName.trim() && root.formAddress.trim()))
-                  width: addBtnText.implicitWidth + Style.space(16)
-                  height: Style.space(26)
-                  radius: Style.cornerRadius
-                  color: Color.accent
-                  opacity: isFormValid ? 1.0 : 0.4
+                // JMAP Session URL Field (JMAP only)
+                TextField {
+                  id: calJmapUrlInput
+                  visible: root.formType === "jmap"
+                  width: parent.width
+                  placeholderText: "Session URL (default: https://api.fastmail.com/jmap/session)"
+                  text: root.formJmapUrl
+                  foreground: root.contentForeground
+                  font.family: root.contentFontFamily
+                  onTextChanged: root.formJmapUrl = text
+                }
 
-                  Text {
-                    textFormat: Text.PlainText
-                    id: addBtnText
-                    anchors.centerIn: parent
-                    text: "Add Calendar"
-                    color: Color.background
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: true
+                // JMAP Token Field (JMAP only)
+                TextField {
+                  id: calJmapTokenInput
+                  visible: root.formType === "jmap"
+                  width: parent.width
+                  placeholderText: "JMAP API / Bearer Token"
+                  password: true
+                  text: root.formJmapToken
+                  foreground: root.contentForeground
+                  font.family: root.contentFontFamily
+                  onTextChanged: root.formJmapToken = text
+                }
+
+                // Address / ID Field (not needed for Local)
+                TextField {
+                  id: calAddressInput
+                  visible: root.formType !== "local"
+                  width: parent.width
+                  placeholderText: root.formType === "googleId"
+                    ? "Google Calendar ID (e.g. xyz@group.calendar.google.com)"
+                    : (root.formType === "jmap"
+                       ? "Calendar ID (optional, leave blank for all)"
+                       : "iCal URL (Google, Apple, Proton .ics link)")
+                  text: root.formAddress
+                  foreground: root.contentForeground
+                  font.family: root.contentFontFamily
+                  onTextChanged: root.formAddress = text
+                }
+
+
+                // Color picker row
+                Row {
+                  width: parent.width
+                  spacing: Style.space(12)
+
+                  Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(6)
+
+                    Text {
+                      textFormat: Text.PlainText
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "Color:"
+                      color: Qt.darker(root.contentForeground, 1.5)
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+
+                    Repeater {
+                      model: Model.CALENDAR_COLORS
+                      Rectangle {
+                        required property var modelData
+                        width: Style.space(16)
+                        height: Style.space(16)
+                        radius: width / 2
+                        color: modelData
+                        border.width: root.formColor === modelData ? 2 : 0
+                        border.color: root.contentForeground
+
+                        MouseArea {
+                          anchors.fill: parent
+                          cursorShape: Qt.PointingHandCursor
+                          onClicked: root.formColor = modelData
+                        }
+                      }
+                    }
                   }
 
-                  MouseArea {
-                    anchors.fill: parent
-                    enabled: parent.isFormValid
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.commitNewCalendar()
+                }
+
+                // Form Action Buttons
+                Row {
+                  anchors.right: parent.right
+                  spacing: Style.space(8)
+
+                  Rectangle {
+                    width: cancelBtnText.implicitWidth + Style.space(16)
+                    height: Style.space(26)
+                    radius: Style.cornerRadius
+                    color: cancelMouse.containsMouse ? Style.hoverFillFor(root.contentForeground, Color.accent) : "transparent"
+
+                    Text {
+                      textFormat: Text.PlainText
+                      id: cancelBtnText
+                      anchors.centerIn: parent
+                      text: "Cancel"
+                      color: Qt.darker(root.contentForeground, 1.5)
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+
+                    MouseArea {
+                      id: cancelMouse
+                      anchors.fill: parent
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.addingCalendar = false
+                    }
+                  }
+
+                  Rectangle {
+                    readonly property bool isFormValid: root.formType === "local"
+                      ? Boolean(root.formName.trim())
+                      : (root.formType === "jmap"
+                         ? Boolean(root.formName.trim() && root.formJmapToken.trim())
+                         : Boolean(root.formName.trim() && root.formAddress.trim()))
+                    width: addBtnText.implicitWidth + Style.space(16)
+                    height: Style.space(26)
+                    radius: Style.cornerRadius
+                    color: Color.accent
+                    opacity: isFormValid ? 1.0 : 0.4
+
+                    Text {
+                      textFormat: Text.PlainText
+                      id: addBtnText
+                      anchors.centerIn: parent
+                      text: "Add Calendar"
+                      color: Color.background
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      enabled: parent.isFormValid
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.commitNewCalendar()
+                    }
                   }
                 }
               }
