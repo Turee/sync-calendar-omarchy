@@ -1,6 +1,10 @@
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
+import tempfile
+import time
 import unittest
 
 
@@ -61,19 +65,42 @@ class ShippedSourceContractTests(unittest.TestCase):
     def test_text_fields_exist_only_while_their_form_is_open(self):
         # A TextField follows every clipboard change while it exists, and the
         # panel lives as long as the shell. Each one must sit in a Loader's
-        # sourceComponent, so it is created when its form opens.
+        # sourceComponent, so it is created when its form opens, and must be a
+        # BoundedTextField, whose paste does not read the clipboard natively.
         for path in sorted(ROOT.glob("*.qml")):
+            if path.name == "BoundedTextField.qml":
+                continue  # the definition: it exists only where a form creates it
             open_blocks = []  # brace depth at which each sourceComponent opened
             depth = 0
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 code = re.sub(r"(^|\s)//.*", "", line)  # a comment, not the // of a URL
                 if "sourceComponent:" in code and "{" in code:
                     open_blocks.append(depth)
-                if re.search(r"\b(TextField|TextInput|TextEdit|TextArea)\s*\{", code) and not open_blocks:
+                if re.search(r"\b(TextField|TextInput|TextEdit|TextArea)\s*\{", code):
+                    self.fail(f"{path.name}:{number} creates a text input that pastes natively")
+                if re.search(r"\bBoundedTextField\s*\{", code) and not open_blocks:
                     self.fail(f"{path.name}:{number} creates a text input outside a Loader")
                 depth += code.count("{") - code.count("}")
                 while open_blocks and depth <= open_blocks[-1]:
                     open_blocks.pop()
+
+    def test_paste_stops_at_its_byte_cap_and_deadline(self):
+        # Run the field's own paste command against a fake wl-paste: one that
+        # streams forever, and one that never answers.
+        qml = (ROOT / "BoundedTextField.qml").read_text(encoding="utf-8")
+        self.assertIn("ContextMenu.menu: null", qml)
+        self.assertIn("acceptedButtons: Qt.MiddleButton", qml)
+        script = json.loads(re.search(r'command: \["sh", "-c", ("[^"]+")\]', qml).group(1))
+        for name, body in (("streams", "exec yes"), ("stalls", "exec sleep 30")):
+            with self.subTest(name), tempfile.TemporaryDirectory() as bin_dir:
+                fake = Path(bin_dir) / "wl-paste"
+                fake.write_text(f"#!/bin/sh\n{body}\n")
+                fake.chmod(0o755)
+                env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
+                started = time.monotonic()
+                out = subprocess.run(["sh", "-c", script], env=env, capture_output=True, timeout=10).stdout
+                self.assertLess(time.monotonic() - started, 5)
+                self.assertLessEqual(len(out), 65536)
 
 
 if __name__ == "__main__":

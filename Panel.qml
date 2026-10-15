@@ -1031,7 +1031,7 @@ Panel {
                     font.letterSpacing: 1
                   }
 
-                  TextField {
+                  BoundedTextField {
                     id: bornField
                     width: Style.space(70)
                     anchors.verticalCenter: parent.verticalCenter
@@ -1055,7 +1055,7 @@ Panel {
                     font.letterSpacing: 1
                   }
 
-                  TextField {
+                  BoundedTextField {
                     id: expectancyField
                     width: Style.space(60)
                     anchors.verticalCenter: parent.verticalCenter
@@ -1917,7 +1917,7 @@ Panel {
                   }
 
                   // Title Input
-                  TextField {
+                  BoundedTextField {
                     id: eventTitleInput
                     width: parent.width
                     placeholderText: "Title, or a sentence: Lunch tomorrow 1pm-2pm"
@@ -1930,7 +1930,7 @@ Panel {
                   }
 
                   // Date Input
-                  TextField {
+                  BoundedTextField {
                     id: eventDateInput
                     width: Style.space(110)
                     placeholderText: "YYYY-MM-DD"
@@ -2018,7 +2018,7 @@ Panel {
                       }
 
                       // Start Time Input
-                      TextField {
+                      BoundedTextField {
                         id: eventStartInput
                         visible: !root.eventAllDay
                         width: Style.space(70)
@@ -2039,7 +2039,7 @@ Panel {
                       }
 
                       // End Time Input
-                      TextField {
+                      BoundedTextField {
                         id: eventEndInput
                         visible: !root.eventAllDay
                         width: Style.space(70)
@@ -2094,7 +2094,7 @@ Panel {
                   }
 
                   // Location / URL Input
-                  TextField {
+                  BoundedTextField {
                     id: eventLocInput
                     width: parent.width
                     placeholderText: "Location or Video Meeting URL (optional)"
@@ -2105,7 +2105,7 @@ Panel {
                   }
 
                   // Description Input
-                  TextField {
+                  BoundedTextField {
                     id: eventDescInput
                     width: parent.width
                     placeholderText: "Description / Notes (optional)"
@@ -2934,7 +2934,7 @@ Panel {
                 }
 
                 // Name Field
-                TextField {
+                BoundedTextField {
                   id: calNameInput
                   width: parent.width
                   placeholderText: "Calendar Name (e.g. Personal, Proton, Local Work)"
@@ -2945,7 +2945,7 @@ Panel {
                 }
 
                 // JMAP Session URL Field (JMAP only)
-                TextField {
+                BoundedTextField {
                   id: calJmapUrlInput
                   visible: root.formType === "jmap"
                   width: parent.width
@@ -2957,7 +2957,7 @@ Panel {
                 }
 
                 // JMAP Token Field (JMAP only)
-                TextField {
+                BoundedTextField {
                   id: calJmapTokenInput
                   visible: root.formType === "jmap"
                   width: parent.width
@@ -2970,7 +2970,7 @@ Panel {
                 }
 
                 // Address / ID Field (not needed for Local)
-                TextField {
+                BoundedTextField {
                   id: calAddressInput
                   visible: root.formType !== "local"
                   width: parent.width
