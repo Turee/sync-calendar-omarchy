@@ -94,6 +94,24 @@ def safe_read_text(stream, max_bytes=MAX_ICAL_BYTES):
     return "".join(chunks)
 
 
+class NoDrainRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """
+    Follows redirects like the stock handler, but closes each redirect response
+    unread. The stock handler drains its body with an unbounded fp.read(), so a
+    redirecting server could exhaust memory before safe_read_bytes applies.
+    """
+
+    def http_error_302(self, req, fp, code, msg, headers):
+        fp.close()
+        return super().http_error_302(req, fp, code, msg, headers)
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
+
+
+# Every urlopen in this process (google-auth.py loads this file too) uses it.
+urllib.request.install_opener(urllib.request.build_opener(NoDrainRedirectHandler))
+
+
 def safe_load_json(file_path, max_bytes=MAX_CONFIG_BYTES):
     """
     Read JSON from one descriptor, rejecting links, non-files, foreign owners,
@@ -1460,7 +1478,9 @@ def dbus_notify(summary, body="", urgency=1, glyph="\U000f00ed"):
     hints = {"urgency": ("y", urgency)}
     if glyph:
         hints["omarchy-glyph"] = ("s", glyph)
-    notify = _dbus_notify_body("Chronica", summary, body, hints, -1)
+    # The shell's daemon reads the body as markup (body-markup): escape it, or
+    # a calendar's <a href> or <b> would become a link or styling there.
+    notify = _dbus_notify_body("Chronica", summary, xml_escape(body), hints, -1)
     with _dbus_session_socket() as sock:
         sock.sendall(_dbus_call(1, "org.freedesktop.DBus", "/org/freedesktop/DBus",
                                 "org.freedesktop.DBus", "Hello"))
@@ -2025,7 +2045,7 @@ def validate_jmap_https_url(url, trusted_origin=None, label="JMAP"):
     return url, origin
 
 
-class JmapSameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
+class JmapSameOriginRedirectHandler(NoDrainRedirectHandler):
     """Allow bearer-authenticated redirects only within the trusted HTTPS origin."""
 
     def __init__(self, trusted_origin):

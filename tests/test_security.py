@@ -409,6 +409,18 @@ class DesktopNotificationTests(unittest.TestCase):
              mock.patch.object(fetch_events.subprocess, "Popen", side_effect=AssertionError("child process")):
             self.assertFalse(fetch_events.dbus_notify("Standup 09:30 \U0001f600", "Room 3, caf\u00e9"))
 
+    def test_body_text_reaches_the_daemon_as_text_not_markup(self):
+        seen = {}
+
+        def capture(app, summary, body, hints, timeout):
+            seen["body"] = body
+            raise OSError("stop before the socket")
+
+        with mock.patch.object(fetch_events, "_dbus_notify_body", side_effect=capture):
+            with self.assertRaises(OSError):
+                fetch_events.dbus_notify("Standup", '<a href="http://x">Room</a> & co')
+        self.assertEqual(seen["body"], '&lt;a href="http://x"&gt;Room&lt;/a&gt; &amp; co')
+
 
 class ConfigAndStateSecurityTests(unittest.TestCase):
     def test_save_config_from_stdin(self):
@@ -721,6 +733,55 @@ class TwoWayEventSyncTests(unittest.TestCase):
         self.assertEqual(fetch_events.format_duration_iso(3600), "PT1H")
         self.assertEqual(fetch_events.format_duration_iso(1800), "PT30M")
         self.assertEqual(fetch_events.format_duration_iso(5400), "PT1H30M")
+
+
+class RedirectBodyTests(unittest.TestCase):
+    def test_a_redirect_with_an_endless_body_is_not_read(self):
+        # The stock redirect handler reads the whole 302 body before following
+        # it, with no byte limit: this one never ends.
+        from datetime import datetime
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        import threading
+
+        feed = b"BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\nSUMMARY:Kept\r\nDTSTART:20260601T090000Z\r\nDTEND:20260601T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/feed.ics":
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(feed)))
+                    self.end_headers()
+                    self.wfile.write(feed)
+                    return
+                self.send_response(302)
+                self.send_header("Location", "/feed.ics")
+                self.end_headers()
+                try:
+                    while not server.stopping:
+                        self.wfile.write(b"x" * 65536)
+                except OSError:
+                    pass
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server.daemon_threads = True
+        server.stopping = False
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.addCleanup(setattr, server, "stopping", True)
+
+        result = {}
+        cal = {"name": "Feed", "url": f"http://127.0.0.1:{server.server_port}/start"}
+        worker = threading.Thread(target=lambda: result.update(fetch_events.fetch_calendar(
+            cal, datetime(2026, 5, 1), datetime(2026, 7, 1))), daemon=True)
+        worker.start()
+        worker.join(5)
+        self.assertFalse(worker.is_alive(), "the fetch is still reading the redirect body")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual([e["title"] for e in result["events"]], ["Kept"])
 
 
 if __name__ == "__main__":

@@ -63,10 +63,11 @@ class ShippedSourceContractTests(unittest.TestCase):
                 self.fail(f"{path.relative_to(ROOT)}:{line} has a merge conflict marker")
 
     def test_text_fields_exist_only_while_their_form_is_open(self):
-        # A TextField follows every clipboard change while it exists, and the
+        # A text field follows every clipboard change while it exists, and the
         # panel lives as long as the shell. Each one must sit in a Loader's
         # sourceComponent, so it is created when its form opens, and must be a
-        # BoundedTextField, whose paste does not read the clipboard natively.
+        # BoundedTextField: a plain-text TextEdit whose paste does not read the
+        # clipboard natively.
         for path in sorted(ROOT.glob("*.qml")):
             if path.name == "BoundedTextField.qml":
                 continue  # the definition: it exists only where a form creates it
@@ -88,8 +89,11 @@ class ShippedSourceContractTests(unittest.TestCase):
         # Run the field's own paste command against a fake wl-paste: one that
         # streams forever, and one that never answers.
         qml = (ROOT / "BoundedTextField.qml").read_text(encoding="utf-8")
-        self.assertIn("ContextMenu.menu: null", qml)
-        self.assertIn("acceptedButtons: Qt.MiddleButton", qml)
+        code = "\n".join(re.sub(r"(^|\s)//.*", "", line) for line in qml.splitlines())
+        self.assertIn("textFormat: TextEdit.PlainText", code)
+        self.assertIsNone(re.search(r"\b(TextField|TextInput|TextArea)\s*\{", code))
+        self.assertIn("event.matches(StandardKey.Paste)", code)
+        self.assertIn("acceptedButtons: Qt.MiddleButton", code)
         script = json.loads(re.search(r'command: \["sh", "-c", ("[^"]+")\]', qml).group(1))
         for name, body in (("streams", "exec yes"), ("stalls", "exec sleep 30")):
             with self.subTest(name), tempfile.TemporaryDirectory() as bin_dir:
