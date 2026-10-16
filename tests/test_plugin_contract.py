@@ -94,6 +94,10 @@ class ShippedSourceContractTests(unittest.TestCase):
         self.assertIsNone(re.search(r"\b(TextField|TextInput|TextArea)\s*\{", code))
         self.assertIn("event.matches(StandardKey.Paste)", code)
         self.assertIn("acceptedButtons: Qt.MiddleButton", code)
+        # Qt copies any selection to the primary selection: the token field cannot select.
+        self.assertIn("selectByMouse: !field.password", code)
+        self.assertIn("selectByKeyboard: !field.password", code)
+        self.assertIn("field.password && !field.typesOrDeletes(event)", code)
         script = json.loads(re.search(r'command: \["sh", "-c", ("[^"]+")\]', qml).group(1))
         for name, body in (("streams", "exec yes"), ("stalls", "exec sleep 30")):
             with self.subTest(name), tempfile.TemporaryDirectory() as bin_dir:

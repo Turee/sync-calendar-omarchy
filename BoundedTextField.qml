@@ -32,6 +32,14 @@ FocusScope {
 
   function selectAll() { editor.selectAll() }
 
+  // Printable text, Backspace, Delete or Escape: the only keys the token field passes on.
+  function typesOrDeletes(event) {
+    if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete || event.key === Qt.Key_Escape) return true
+    if (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) return false
+    var code = event.text.length ? event.text.charCodeAt(0) : 0
+    return code >= 32 && code !== 127
+  }
+
   function caretX() {
     return field.password ? metrics.advanceWidth("\u25cf".repeat(editor.cursorPosition)) : editor.cursorRectangle.x
   }
@@ -115,7 +123,10 @@ FocusScope {
       color: field.password ? "transparent" : field.foreground
       selectionColor: field.password ? "transparent" : Style.selectionFillFor(field.foreground, field.accent)
       selectedTextColor: field.foreground
-      selectByMouse: !field.password  // a mouse selection is copied to the primary selection
+      // Qt copies any selection to the primary selection, by mouse or by
+      // keyboard, so the token field cannot select at all.
+      selectByMouse: !field.password
+      selectByKeyboard: !field.password
       cursorDelegate: field.password ? hiddenCaret : null
       inputMethodHints: field.password ? Qt.ImhHiddenText | Qt.ImhSensitiveData | Qt.ImhNoPredictiveText : Qt.ImhNone
 
@@ -143,6 +154,8 @@ FocusScope {
           event.accepted = true
           var next = field.nextItemInFocusChain(event.key === Qt.Key_Tab && !(event.modifiers & Qt.ShiftModifier))
           if (next) next.forceActiveFocus(Qt.TabFocusReason)
+        } else if (field.password && !field.typesOrDeletes(event)) {
+          event.accepted = true  // Ctrl+A, Shift+arrows, undo: anything else could select the token
         }
       }
     }
