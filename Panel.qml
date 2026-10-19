@@ -537,8 +537,7 @@ Panel {
     var tomorrow = new Date(nowMs + 86400000)
     var tomorrowKey = Model.dateKey(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate())
     var events = (root.eventsByDate[root.todayKey] || []).concat(root.eventsByDate[tomorrowKey] || [])
-    var due = Model.dueNotifications(events, nowMs, root.notifyMinutesBefore, root.notifiedEventKeys,
-                                     function(evt) { return root.eventTimeRange(evt, " - ") })
+    var due = Model.dueNotifications(events, nowMs, root.notifyMinutesBefore, root.notifiedEventKeys)
     if (due.length === 0) return
     var updated = Object.assign({}, root.notifiedEventKeys)
     for (var i = 0; i < due.length; i++) {

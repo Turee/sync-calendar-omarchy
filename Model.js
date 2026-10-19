@@ -606,8 +606,11 @@ function notificationStage(diffMin, noticeSetting) {
 }
 
 // The reminders due now: [{ key, title, body }], skipping keys already in
-// `sentKeys`. `timeRange(evt)` formats the event's times for the body.
-function dueNotifications(events, nowMs, noticeSetting, sentKeys, timeRange) {
+// `sentKeys`. Their text is fixed: the shell's notification service passes a
+// notification's text to Bash as process arguments when it saves it, where
+// any local account can read them, so no event title, place or calendar name
+// goes into one. The panel shows the details.
+function dueNotifications(events, nowMs, noticeSetting, sentKeys) {
   var due = []
   var seen = {}
   for (var i = 0; i < (events || []).length; i++) {
@@ -624,15 +627,10 @@ function dueNotifications(events, nowMs, noticeSetting, sentKeys, timeRange) {
     if ((sentKeys && sentKeys[key]) || seen[key]) continue
     seen[key] = true
 
-    var body = []
-    if (evt.calendar) body.push("[" + evt.calendar + "]")
-    if (evt.startTime && timeRange) body.push(timeRange(evt))
-    if (evt.meetingProvider) body.push("📹 " + evt.meetingProvider)
-    else if (evt.location) body.push("📍 " + evt.location)
     due.push({
       key: key,
-      title: (diffMin <= 1 ? "Starting now: " : "Upcoming in " + diffMin + "m: ") + evt.title,
-      body: body.join("  ·  ")
+      title: diffMin <= 1 ? "An event starts now" : "An event starts in " + diffMin + " minutes",
+      body: "Open the calendar in the bar to see it."
     })
   }
   return due

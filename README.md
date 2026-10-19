@@ -27,7 +27,7 @@ Follows your Omarchy theme (the shots below are three different ones). Works wit
 - **Universal iCalendar & JMAP Support**: Compatible with any calendar service providing an `.ics` / `webcal://` link (Google, Apple iCloud, Proton, Outlook / Office 365, Nextcloud, generic iCal) or modern **JMAP** API (Fastmail, Stalwart, Cyrus IMAP, Apache James).
 - **Offline Local Calendar**: Create and manage local events stored in `~/.local/state/omarchy/local-events.json` without needing any external cloud account.
 - **One-Click "Join Meeting"**: Automatically detects Google Meet, Zoom, Microsoft Teams, Webex, and Jitsi links in event details and displays an instant join button.
-- **Staged & Configurable Notifications**: Native alerts prior to upcoming meetings with smart staged reminders (10m, 5m, 1m before) or single intervals (5m, 10m, 15m, 30m).
+- **Staged & Configurable Notifications**: Native alerts prior to upcoming meetings with smart staged reminders (10m, 5m, 1m before) or single intervals (5m, 10m, 15m, 30m). A reminder says only when an event starts, never its title, place or calendar: the shell's notification service exposes notification text to other local accounts, so the details stay in the panel.
 - **Copy Agenda as Markdown**: 1-click clipboard export (`󰆏` button or `y` hotkey) to format your daily schedule into clean Markdown tasks for standups, Slack, or Obsidian.
 - **Quick-Toggle Calendar Filter Chips**: Fast single-click filter pills in the agenda header to isolate or show specific calendars on the fly.
 - **Configurable Auto-Sync & Instant Refresh**: Customizable background sync intervals (5m, 15m, 30m, 60m, or manual) plus an instant sync button with real-time status.
@@ -36,7 +36,7 @@ Follows your Omarchy theme (the shots below are three different ones). Works wit
 - **Interactive Month Grid**: Click any date to view scheduled events for that day.
 - **Next 7 Days**: The `7 days` pill (or `u`) lists the coming week, with a title per day. Click an event to read its description.
 - **Quick Add**: Type a sentence in the title field, such as `Lunch tomorrow 1pm-2pm`, `Standup friday 9:30-9:45` or `Dentiste demain 14h`, then press Enter. The plugin fills the date and times and keeps `Lunch` as the title. You still review and save the event.
-- **12/24-Hour Time Preference**: Switch the clock, agenda, notifications, and copied agenda times between 12-hour and 24-hour display.
+- **12/24-Hour Time Preference**: Switch the clock, agenda and copied agenda times between 12-hour and 24-hour display.
 - **Visual Event Indicators**: Days with events show subtle colored dots corresponding to the calendar source.
 - **Fast & Non-Blocking**: One background helper process (`fetch-events.py --serve`, about 35 MB) runs every sync and edit in turn, so edits never race. The shell starts it and stops it; it restarts by itself after a crash. Each sync downloads only what changed.
 - **Recurring & Multi-Day Events**: Full support for daily, weekly, monthly, and yearly recurring events (`RRULE` / `EXDATE`) and multi-day spans.

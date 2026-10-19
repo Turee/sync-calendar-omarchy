@@ -181,14 +181,17 @@ test("Model.dueNotifications sends each due reminder once", () => {
     // A multi-day event appears on two days: one reminder.
     { id: "b", title: "Review", startIso: at(10, 0), startTime: "10:00", meetingProvider: "Zoom" },
   ];
-  const due = Model.dueNotifications(events, now, "staged", {}, () => "10:00 - 10:30");
-  assert.deepEqual(due.map((d) => d.title), ["Upcoming in 5m: Standup", "Upcoming in 5m: Review"]);
-  assert.equal(due[0].body, "[Work]  ·  10:00 - 10:30  ·  📍 Room 1");
-  assert.equal(due[1].body, "10:00 - 10:30  ·  📹 Zoom");
+  const due = Model.dueNotifications(events, now, "staged", {});
+  assert.deepEqual(due.map((d) => d.key.split("_")[0]), ["a", "b"]);
+  // The text is fixed: the shell's notification service exposes it in process arguments.
+  for (const d of due) {
+    assert.equal(d.title, "An event starts in 5 minutes");
+    for (const word of ["Standup", "Review", "Work", "Room 1", "Zoom", "10:00"])
+      assert.ok(!(d.title + d.body).includes(word), word);
+  }
 
   const sent = { [due[0].key]: true };
-  assert.deepEqual(Model.dueNotifications(events, now, "staged", sent, () => "").map((d) => d.title),
-                   ["Upcoming in 5m: Review"]);
+  assert.deepEqual(Model.dueNotifications(events, now, "staged", sent).map((d) => d.key.split("_")[0]), ["b"]);
 });
 
 test("Model.upcomingEvents flattens days with one heading each", () => {
