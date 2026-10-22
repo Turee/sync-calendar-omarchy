@@ -784,5 +784,34 @@ class RedirectBodyTests(unittest.TestCase):
         self.assertEqual([e["title"] for e in result["events"]], ["Kept"])
 
 
+
+class FeedWorkBoundTests(unittest.TestCase):
+    def test_a_long_folded_line_unfolds_in_linear_time(self):
+        # 50,000 continuations of one property, 3.75 MB, under the feed cap.
+        import threading, time
+        raw = "DESCRIPTION:x\r\n" + "".join(" " + "y" * 74 + "\r\n" for _ in range(50000))
+        out = {}
+        worker = threading.Thread(target=lambda: out.update(lines=fetch_events.unfold_lines(raw)), daemon=True)
+        started = time.monotonic()
+        worker.start()
+        worker.join(10)
+        self.assertFalse(worker.is_alive(), "unfolding is still copying the line")
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(len(out["lines"]), 1)
+        self.assertEqual(len(out["lines"][0]), len("DESCRIPTION:x") + 50000 * 74)
+
+    def test_a_sync_that_never_ends_is_stopped_at_the_deadline(self):
+        import time
+        with tempfile.TemporaryDirectory() as directory:
+            stuck = os.path.join(directory, "python3")
+            with open(stuck, "w") as f:
+                f.write("#!/bin/sh\nexec sleep 30\n")
+            os.chmod(stuck, 0o755)
+            started = time.monotonic()
+            with mock.patch.object(fetch_events.sys, "executable", stuck):
+                result = fetch_events.sync_in_child(deadline=1)
+            self.assertLess(time.monotonic() - started, 5)
+            self.assertEqual(result["status"], "error")
+
 if __name__ == "__main__":
     unittest.main()

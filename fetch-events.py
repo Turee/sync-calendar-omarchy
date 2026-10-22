@@ -417,16 +417,20 @@ def migrate_secrets_to_keyring():
 
 
 def unfold_lines(raw_text):
-    """Unfold lines in an iCalendar stream according to RFC 5545."""
+    """
+    Unfold lines in an iCalendar stream according to RFC 5545. Each logical
+    line collects its pieces in a list and joins them once: appending to a
+    string would copy it for every continuation, quadratic in the line length.
+    """
     lines = []
     for line in raw_text.splitlines():
         if not line:
             continue
         if (line.startswith(" ") or line.startswith("\t")) and lines:
-            lines[-1] += line[1:]
+            lines[-1].append(line[1:])
         else:
-            lines.append(line)
-    return lines
+            lines.append([line])
+    return ["".join(parts) for parts in lines]
 
 
 def unescape_ical_text(val):
@@ -3756,13 +3760,32 @@ def _event_command(handler):
 
 
 SERVE_COMMANDS = {
-    "sync": lambda payload: sync_all_events(),
+    "sync": lambda payload: sync_in_child(),
     "save-config": save_config_command,
     "create-event": _event_command(create_event),
     "update-event": _event_command(update_event),
     "delete-event": _event_command(delete_event),
     "notify": notify_command,
 }
+
+
+SYNC_DEADLINE_SECONDS = 120
+
+
+def sync_in_child(deadline=SYNC_DEADLINE_SECONDS):
+    """
+    Run one sync as a child process and kill it at the deadline. A thread
+    cannot be stopped, so a feed that keeps the parser busy would otherwise
+    hold the serial backend, and every later panel call, for good. The child
+    writes calendar-events.json, which the panel reloads; its output is not
+    read, and its command line holds no calendar data.
+    """
+    try:
+        proc = subprocess.run([sys.executable, os.path.abspath(__file__)], stdin=subprocess.DEVNULL,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=deadline, check=False)
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "message": f"Sync stopped after {deadline} s"}
+    return {"status": "success" if proc.returncode == 0 else "error"}
 
 
 def serve(stdin=None, stdout=None):
