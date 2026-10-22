@@ -54,6 +54,12 @@ MAX_RECURRENCE_ITERATIONS = 2000    # CPU-work ceiling for expanding recurrence 
 MAX_RECURRENCE_CANDIDATES = 100000  # Day-and-time candidates one rule may produce in total
 MAX_EXPANDED_INSTANCES = 500        # Maximum instances generated per recurring/multiday event
 MAX_FEED_INSTANCES = 20000          # Memory ceiling for one whole feed: the per-event caps multiply
+# Output text limits. Every instance of a recurring event shares one string in
+# memory, but the output repeats it per instance: these bound what one copy
+# adds, and MAX_OUTPUT_JSON_BYTES bounds the sum before anything is serialized.
+MAX_TITLE_CHARS = 1024
+MAX_PLACE_CHARS = 2048       # location, URLs, calendar name
+MAX_DESCRIPTION_CHARS = 32768
 
 
 def safe_read_bytes(stream, max_bytes=MAX_ICAL_BYTES):
@@ -3634,12 +3640,34 @@ def sync_all_events():
                     })
 
     events_by_date = {}
+    output_budget = MAX_OUTPUT_JSON_BYTES
     for evt in all_events:
         if not isinstance(evt, dict):
             continue
         d_key = str(evt.get("date_key") or "")
         if not d_key:
             continue
+        clipped = False
+
+        def text(key, limit, default=""):
+            nonlocal clipped
+            value = str(evt.get(key) or default)
+            if len(value) > limit:
+                clipped = True
+                value = value[:limit]
+            return value
+
+        title = text("title", MAX_TITLE_CHARS, "(Untitled Event)")
+        description = text("description", MAX_DESCRIPTION_CHARS)
+        location = text("location", MAX_PLACE_CHARS)
+        calendar_name = text("calendar", MAX_PLACE_CHARS, "Calendar")
+        meeting_url = text("meetingUrl", MAX_PLACE_CHARS)
+        meeting_provider = text("meetingProvider", MAX_PLACE_CHARS)
+        # ponytail: chars, not UTF-8 bytes; the file check after serializing stays exact
+        output_budget -= 512 + len(title) + len(description) + len(location) + len(calendar_name) \
+            + len(meeting_url) + len(meeting_provider)
+        if output_budget < 0:
+            break
         if d_key not in events_by_date:
             events_by_date[d_key] = []
 
@@ -3666,6 +3694,7 @@ def sync_all_events():
         # and CalDAV/JMAP series would be rewritten wrongly, so they stay read-only.
         editable = (
             writable
+            and not clipped  # saving would cut the event's text on the server
             and not (evt.get("rrule") or evt.get("recurring"))
             and isinstance(start_dt, datetime) and isinstance(end_dt, datetime)
             and (
@@ -3676,23 +3705,23 @@ def sync_all_events():
 
         events_by_date[d_key].append({
             "id": str(evt.get("id", "")),
-            "title": str(evt.get("title") or "(Untitled Event)"),
-            "calendar": str(evt.get("calendar") or "Calendar"),
+            "title": title,
+            "calendar": calendar_name,
             "calendarId": str(evt.get("calendarId", "")),
             "calendarType": str(evt.get("calendarType", "ical")),
             "writable": writable,
             "editable": editable,
             "recurring": bool(evt.get("rrule") or evt.get("recurring")),
-            "description": str(evt.get("description") or ""),
+            "description": description,
             "color": str(evt.get("color") or "#4A90E2"),
             "allDay": is_all_day,
             "startTime": start_time_str if not is_all_day else "All Day",
             "endTime": end_time_str if not is_all_day else "",
-            "location": str(evt.get("location") or ""),
+            "location": location,
             "startIso": start_iso,
             "endIso": end_iso,
-            "meetingUrl": str(evt.get("meetingUrl") or ""),
-            "meetingProvider": str(evt.get("meetingProvider") or ""),
+            "meetingUrl": meeting_url,
+            "meetingProvider": meeting_provider,
         })
 
     for d_key in events_by_date:

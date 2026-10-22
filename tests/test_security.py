@@ -813,5 +813,42 @@ class FeedWorkBoundTests(unittest.TestCase):
             self.assertLess(time.monotonic() - started, 5)
             self.assertEqual(result["status"], "error")
 
+    def test_a_recurring_event_with_huge_text_stays_bounded_in_the_output(self):
+        # One daily event with a 9 MB description: each of its ~135 instances
+        # in the window used to repeat the whole text in the output JSON.
+        import tracemalloc
+        from datetime import datetime, timedelta
+        start = (datetime.now() - timedelta(days=40)).strftime("%Y%m%dT090000")
+        feed = ("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:big\r\nSUMMARY:Daily\r\n"
+                f"DTSTART:{start}\r\nDTEND:{start[:9]}100000\r\nRRULE:FREQ=DAILY\r\n"
+                "DESCRIPTION:" + "d" * 9_000_000 + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+        with tempfile.TemporaryDirectory() as directory:
+            cfg_path = os.path.join(directory, "calendars.json")
+            out_path = os.path.join(directory, "calendar-events.json")
+            fetch_events.write_secure_json(cfg_path, [{"name": "Feed", "url": "https://example.com/f.ics"}])
+
+            def fetch(cal, window_start, window_end):
+                events = fetch_events.parse_ics(feed, cal, window_start, window_end)
+                return {"name": "Feed", "events": events, "status": "ok", "count": len(events)}
+
+            with mock.patch.object(fetch_events, "CONFIG_PATH", cfg_path), \
+                 mock.patch.object(fetch_events, "OUTPUT_PATH", out_path), \
+                 mock.patch.object(fetch_events, "LOCAL_EVENTS_PATH", os.path.join(directory, "local.json")), \
+                 mock.patch.object(fetch_events, "STATE_DIR", directory), \
+                 mock.patch.object(fetch_events, "fetch_calendar_item", side_effect=fetch):
+                tracemalloc.start()
+                fetch_events.sync_all_events()
+                peak = tracemalloc.get_traced_memory()[1]
+                tracemalloc.stop()
+            self.assertLess(peak, 300 * 1024 * 1024)
+            self.assertLessEqual(os.path.getsize(out_path), fetch_events.MAX_OUTPUT_JSON_BYTES)
+            with open(out_path) as f:
+                days = json.load(f)["eventsByDate"]
+            instances = [e for day in days.values() for e in day]
+            self.assertTrue(instances)
+            for e in instances:
+                self.assertLessEqual(len(e["description"]), fetch_events.MAX_DESCRIPTION_CHARS)
+                self.assertFalse(e["editable"])
+
 if __name__ == "__main__":
     unittest.main()
