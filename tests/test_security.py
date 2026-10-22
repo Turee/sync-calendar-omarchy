@@ -813,6 +813,31 @@ class FeedWorkBoundTests(unittest.TestCase):
             self.assertLess(time.monotonic() - started, 5)
             self.assertEqual(result["status"], "error")
 
+    def test_an_event_command_that_never_ends_is_stopped_at_the_deadline(self):
+        import time
+        with tempfile.TemporaryDirectory() as directory:
+            stuck = os.path.join(directory, "python3")
+            with open(stuck, "w") as f:
+                f.write("#!/bin/sh\nexec sleep 30\n")
+            os.chmod(stuck, 0o755)
+            started = time.monotonic()
+            with mock.patch.object(fetch_events.sys, "executable", stuck):
+                result = fetch_events.event_in_child("--create-event", {"title": "x"}, deadline=1)
+            self.assertLess(time.monotonic() - started, 5)
+            self.assertEqual(result["status"], "error")
+
+    def test_an_event_command_runs_in_a_child_with_its_payload_on_stdin(self):
+        # A real child, with HOME in a temporary folder: it creates a local
+        # event, syncs, and answers through the size-limited reply.
+        with tempfile.TemporaryDirectory() as home:
+            with mock.patch.dict(os.environ, {"HOME": home}):
+                result = fetch_events.event_in_child("--create-event", {
+                    "title": "Child Standup", "start": "2026-09-01T09:00:00",
+                    "end": "2026-09-01T09:30:00", "calendar": "Local Calendar"})
+            self.assertEqual(result["status"], "success", result)
+            with open(os.path.join(home, ".local/state/omarchy/local-events.json")) as f:
+                self.assertEqual([e["title"] for e in json.load(f)], ["Child Standup"])
+
     def test_a_recurring_event_with_huge_text_stays_bounded_in_the_output(self):
         # One daily event with a 9 MB description: each of its ~135 instances
         # in the window used to repeat the whole text in the output JSON.
@@ -849,6 +874,138 @@ class FeedWorkBoundTests(unittest.TestCase):
             for e in instances:
                 self.assertLessEqual(len(e["description"]), fetch_events.MAX_DESCRIPTION_CHARS)
                 self.assertFalse(e["editable"])
+
+    def _sync_feed(self, feed):
+        """Run sync_all_events over one in-memory feed; returns (peak bytes, written JSON)."""
+        import tracemalloc
+        with tempfile.TemporaryDirectory() as directory:
+            cfg_path = os.path.join(directory, "calendars.json")
+            out_path = os.path.join(directory, "calendar-events.json")
+            fetch_events.write_secure_json(cfg_path, [{"name": "Feed", "url": "https://example.com/f.ics"}])
+
+            def fetch(cal, window_start, window_end):
+                events = fetch_events.parse_ics(feed, cal, window_start, window_end)
+                return {"name": "Feed", "events": events, "status": "ok", "count": len(events)}
+
+            with mock.patch.object(fetch_events, "CONFIG_PATH", cfg_path), \
+                 mock.patch.object(fetch_events, "OUTPUT_PATH", out_path), \
+                 mock.patch.object(fetch_events, "LOCAL_EVENTS_PATH", os.path.join(directory, "local.json")), \
+                 mock.patch.object(fetch_events, "STATE_DIR", directory), \
+                 mock.patch.object(fetch_events, "fetch_calendar_item", side_effect=fetch):
+                tracemalloc.start()
+                fetch_events.sync_all_events()
+                peak = tracemalloc.get_traced_memory()[1]
+                tracemalloc.stop()
+            self.assertLessEqual(os.path.getsize(out_path), fetch_events.MAX_OUTPUT_JSON_BYTES)
+            with open(out_path) as f:
+                return peak, json.load(f)
+
+    def test_every_field_of_a_recurring_event_stays_bounded_in_the_output(self):
+        # A daily event whose UID, location and URL are megabytes long: each
+        # instance in the window used to repeat them in the output JSON.
+        from datetime import datetime, timedelta
+        start = (datetime.now() - timedelta(days=40)).strftime("%Y%m%dT090000")
+        feed = ("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:" + "u" * 9_000_000 + "\r\nSUMMARY:Daily\r\n"
+                f"DTSTART:{start}\r\nDTEND:{start[:9]}100000\r\nRRULE:FREQ=DAILY\r\n"
+                "LOCATION:" + "l" * 3_000_000 + "\r\nURL:https://example.com/" + "p" * 3_000_000 +
+                "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+        peak, out = self._sync_feed(feed)
+        self.assertLess(peak, 300 * 1024 * 1024)
+        instances = [e for day in out["eventsByDate"].values() for e in day]
+        self.assertGreater(len(instances), 100)
+        for e in instances:
+            for key, value in e.items():
+                if isinstance(value, str):
+                    self.assertLessEqual(len(value), fetch_events.OUTPUT_FIELD_LIMITS.get(key, fetch_events.MAX_FIELD_CHARS), key)
+            self.assertTrue(e["id"].startswith("long-id-"))
+            self.assertFalse(e["writable"])
+            self.assertFalse(e["editable"])
+
+    def test_rdates_share_the_per_event_instance_ceiling(self):
+        from datetime import datetime, timedelta
+        base = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        rdates = ",".join((base + timedelta(seconds=37 * i)).strftime("%Y%m%dT%H%M%S") for i in range(200000))
+        feed = ("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:r\r\nSUMMARY:Many\r\n"
+                f"DTSTART:{base.strftime('%Y%m%dT%H%M%S')}\r\nDURATION:PT1M\r\nRDATE:{rdates}\r\n"
+                "EXDATE:" + ",".join("19990101T000000" for _ in range(50000)) +
+                "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+        events = fetch_events.parse_ics(feed, {"name": "Feed"}, base - timedelta(days=45), base + timedelta(days=90))
+        self.assertLessEqual(len(events), fetch_events.MAX_EXPANDED_INSTANCES)
+
+    def test_a_served_answer_is_one_short_line(self):
+        out = io.StringIO()
+        with mock.patch.dict(fetch_events.SERVE_COMMANDS, {"big": lambda p: {"status": "error", "message": "m" * 5_000_000},
+                                                            "huge": lambda p: {"status": "ok", "data": "d" * 5_000_000}}):
+            fetch_events.serve(io.StringIO('{"id": 1, "cmd": "big"}\n{"id": 2, "cmd": "huge"}\n'), out)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertLessEqual(len(json.loads(lines[0])["result"]["message"]), fetch_events.MAX_FIELD_CHARS)
+        self.assertEqual(json.loads(lines[1])["result"]["status"], "error")
+        self.assertTrue(all(len(line) <= fetch_events.MAX_SERVE_REPLY_CHARS for line in lines))
+
+    def test_google_pages_share_one_byte_limit(self):
+        page = json.dumps({"items": [{"id": "x" * 4_000_000}], "nextPageToken": "more"}).encode()
+
+        class Page(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        calls = []
+
+        def urlopen(req, timeout=None):
+            calls.append(req)
+            return Page(page)
+
+        with mock.patch.object(fetch_events.urllib.request, "urlopen", side_effect=urlopen):
+            with self.assertRaises(ValueError):
+                fetch_events.google_list("https://www.googleapis.com/x", {}, "token")
+        self.assertLessEqual(len(calls), 3)
+
+
+class GoogleSignInTests(unittest.TestCase):
+    def test_pkce_challenge_matches_rfc_7636(self):
+        self.assertEqual(google_auth.pkce_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+                         "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+        verifier, challenge = google_auth.pkce_pair()
+        self.assertTrue(43 <= len(verifier) <= 128)
+        self.assertEqual(challenge, google_auth.pkce_challenge(verifier))
+
+    def test_the_token_request_carries_the_verifier(self):
+        sent = {}
+
+        class Answer(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def urlopen(req, timeout=None):
+            sent.update(urllib.parse.parse_qs(req.data.decode()))
+            return Answer(b'{"access_token": "a"}')
+
+        import urllib.parse
+        with mock.patch.object(google_auth.urllib.request, "urlopen", side_effect=urlopen):
+            google_auth.exchange_code_for_tokens("cid", "secret", "code", "the-verifier")
+        self.assertEqual(sent["code_verifier"], ["the-verifier"])
+
+    def test_a_silent_local_connection_does_not_hold_the_callback_server(self):
+        import socket, threading, time
+        from http.server import HTTPServer
+        server = HTTPServer(("127.0.0.1", 0), google_auth.OAuthCallbackHandler)
+        self.addCleanup(server.server_close)
+        google_auth.OAuthCallbackHandler.timeout = 1
+        self.addCleanup(setattr, google_auth.OAuthCallbackHandler, "timeout", 10)
+        silent = socket.create_connection(server.server_address)
+        self.addCleanup(silent.close)
+        done = threading.Event()
+        threading.Thread(target=lambda: (server.handle_request(), done.set()), daemon=True).start()
+        started = time.monotonic()
+        self.assertTrue(done.wait(5), "the server is still waiting for the silent client")
+        self.assertLess(time.monotonic() - started, 5)
 
 if __name__ == "__main__":
     unittest.main()

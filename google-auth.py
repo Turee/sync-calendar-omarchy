@@ -4,6 +4,8 @@ Google Calendar OAuth2 Authorization Helper for Omarchy Calendar Plugin.
 Acquires and stores a refresh token for accessing private/shared Google Calendars via the API.
 """
 
+import base64
+import hashlib
 import importlib.util
 import os
 import sys
@@ -51,6 +53,10 @@ write_secure_json = backend.write_secure_json
 
 
 class OAuthCallbackHandler(BaseHTTPRequestHandler):
+    # Any local account can connect to the port: one that sends nothing must
+    # not hold the single-threaded server past the sign-in deadline.
+    timeout = 10
+
     def do_GET(self):
         global auth_code, auth_failed, expected_state
         query = urllib.parse.urlparse(self.path).query
@@ -111,12 +117,28 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
         pass
 
 
-def exchange_code_for_tokens(client_id, client_secret, code):
+def pkce_pair():
+    """
+    (code_verifier, code_challenge) for PKCE (RFC 7636, S256). The sign-in URL,
+    with its state, reaches the browser through a command line any local
+    account can read; only the verifier, which never leaves this process,
+    can turn a code into tokens, so a code someone else injects is useless.
+    """
+    verifier = secrets.token_urlsafe(64)
+    return verifier, pkce_challenge(verifier)
+
+
+def pkce_challenge(verifier):
+    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
+
+
+def exchange_code_for_tokens(client_id, client_secret, code, code_verifier):
     url = "https://oauth2.googleapis.com/token"
     payload = urllib.parse.urlencode({
         "client_id": client_id,
         "client_secret": client_secret,
         "code": code,
+        "code_verifier": code_verifier,
         "grant_type": "authorization_code",
         "redirect_uri": REDIRECT_URI,
     }).encode("utf-8")
@@ -159,6 +181,7 @@ def authorize(client_id, client_secret):
     auth_code = None
     auth_failed = False
     expected_state = secrets.token_urlsafe(32)
+    code_verifier, code_challenge = pkce_pair()
 
     auth_url = (
         "https://accounts.google.com/o/oauth2/v2/auth?"
@@ -170,6 +193,8 @@ def authorize(client_id, client_secret):
             "access_type": "offline",
             "prompt": "consent",
             "state": expected_state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
         })
     )
 
@@ -195,7 +220,7 @@ def authorize(client_id, client_secret):
         raise RuntimeError("Sign-in timed out or was cancelled.")
 
     try:
-        tokens = exchange_code_for_tokens(client_id, client_secret, auth_code)
+        tokens = exchange_code_for_tokens(client_id, client_secret, auth_code, code_verifier)
     except Exception as e:
         raise RuntimeError(f"Failed to exchange tokens: {e}") from e
     refresh_token = tokens.get("refresh_token") or existing_auth.get("refresh_token")

@@ -28,7 +28,7 @@ class ServeTests(unittest.TestCase):
         calls = []
         with mock.patch.dict(fetch_events.SERVE_COMMANDS, {
             "sync": lambda payload: calls.append("sync") or {"status": "success", "totalEvents": 3},
-            "create-event": fetch_events._event_command(lambda p: calls.append(p["title"]) or {"status": "success"}),
+            "create-event": lambda p: calls.append(p["title"]) or {"status": "success"},
         }):
             answers = self.run_serve(
                 json.dumps({"id": 1, "cmd": "create-event", "payload": {"title": "A"}}),

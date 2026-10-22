@@ -85,6 +85,12 @@ class ShippedSourceContractTests(unittest.TestCase):
                 while open_blocks and depth <= open_blocks[-1]:
                     open_blocks.pop()
 
+    def test_the_agenda_draws_a_bounded_number_of_rows(self):
+        # One delegate per event, and a feed decides how many a day holds.
+        qml = (ROOT / "Panel.qml").read_text(encoding="utf-8")
+        self.assertNotIn("model: root.displayedEvents\n", qml)
+        self.assertIn("model: root.displayedEvents.slice(0, root.maxAgendaRows)", qml)
+
     def test_paste_stops_at_its_byte_cap_and_deadline(self):
         # Run the field's own paste command against a fake wl-paste: one that
         # streams forever, and one that never answers.

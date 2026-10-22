@@ -91,6 +91,7 @@ class WizardFlowTests(unittest.TestCase):
             (fetch_events, "CONFIG_PATH", self.config),
             (setup.webbrowser, "open", lambda url: True),
             (fetch_events, "sync_all_events", lambda: {}),
+            (fetch_events, "sync_in_child", lambda: {}),
         ]:
             patcher = mock.patch.object(obj, attr, value)
             patcher.start()

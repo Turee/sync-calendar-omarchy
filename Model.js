@@ -629,11 +629,21 @@ function dueNotifications(events, nowMs, noticeSetting, sentKeys) {
 
     due.push({
       key: key,
+      start: startMs,
       title: diffMin <= 1 ? "An event starts now" : "An event starts in " + diffMin + " minutes",
       body: "Open the calendar in the bar to see it."
     })
   }
   return due
+}
+
+// One notification for all the reminders due at once: a feed decides how
+// many of its events start together, and each notification costs the shell a
+// popup and a Bash job. Returns null when nothing is due.
+function reminderSummary(due) {
+  if (!due || due.length === 0) return null
+  if (due.length === 1) return { title: due[0].title, body: due[0].body }
+  return { title: due.length + " events start soon", body: "Open the calendar in the bar to see them." }
 }
 
 // The events of `days` days from `fromKey`, in date order, as one flat list.
@@ -806,6 +816,7 @@ if (typeof module !== "undefined") {
     parseTimeInput: parseTimeInput,
     notificationStage: notificationStage,
     dueNotifications: dueNotifications,
+    reminderSummary: reminderSummary,
     upcomingEvents: upcomingEvents,
     parseQuickAdd: parseQuickAdd,
     parseDateInput: parseDateInput,

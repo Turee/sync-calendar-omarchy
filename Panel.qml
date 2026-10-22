@@ -69,6 +69,9 @@ Panel {
   // The event card opened to show its details (calendar/id/day), or "".
   property string expandedEventKey: ""
   onSelectedDateKeyChanged: agendaMode = "day"
+  // The agenda draws at most this many rows: one delegate per event, and a
+  // feed decides how many events a day has.
+  readonly property int maxAgendaRows: 200
   readonly property var displayedEvents: {
     var filter = root.activeCalendarFilter
     var keep = (filter === "all" || !filter) ? null : function(e) { return e.calendar === filter }
@@ -539,12 +542,16 @@ Panel {
     var events = (root.eventsByDate[root.todayKey] || []).concat(root.eventsByDate[tomorrowKey] || [])
     var due = Model.dueNotifications(events, nowMs, root.notifyMinutesBefore, root.notifiedEventKeys)
     if (due.length === 0) return
-    var updated = Object.assign({}, root.notifiedEventKeys)
-    for (var i = 0; i < due.length; i++) {
-      updated[due[i].key] = true
-      root.sendDesktopNotification(due[i].title, due[i].body)
+    // Keys map to the event's start; those of events that began over an hour
+    // ago can no longer come due, so they go.
+    var updated = {}
+    for (var key in root.notifiedEventKeys) {
+      if (root.notifiedEventKeys[key] > nowMs - 3600000) updated[key] = root.notifiedEventKeys[key]
     }
+    for (var i = 0; i < due.length; i++) updated[due[i].key] = due[i].start
     root.notifiedEventKeys = updated
+    var note = Model.reminderSummary(due)
+    root.sendDesktopNotification(note.title, note.body)
   }
 
   function copyAgendaMarkdown() {
@@ -572,14 +579,10 @@ Panel {
     if (!url || typeof url !== "string") return
     var targetUrl = url.trim()
     if (!targetUrl) return
-    // Validate scheme and characters before passing to Qt.openUrlExternally / xdg-open
+    // Validate scheme and characters before passing to Qt.openUrlExternally,
+    // which hands the URL to the desktop portal over D-Bus: no command line.
     if (!/^https?:\/\/[a-zA-Z0-9.\-]+(?::\d+)?(\/[^\s<>"'`]*)?$/i.test(targetUrl)) return
-    if (typeof Qt.openUrlExternally === "function") {
-      Qt.openUrlExternally(targetUrl)
-    } else {
-      openUrlProc.command = ["xdg-open", targetUrl]
-      openUrlProc.running = true
-    }
+    Qt.openUrlExternally(targetUrl)
   }
 
   function selectDate(key, inMonth, year, month) {
@@ -776,10 +779,6 @@ Panel {
     id: agendaErrorTimer
     interval: 8000
     onTriggered: root.agendaErrorMessage = ""
-  }
-
-  Process {
-    id: openUrlProc
   }
 
   Process {
@@ -2323,7 +2322,7 @@ Panel {
               visible: root.displayedEvents.length > 0
 
               Repeater {
-                model: root.displayedEvents
+                model: root.displayedEvents.slice(0, root.maxAgendaRows)
 
                 Column {
                   required property var modelData
@@ -2563,6 +2562,15 @@ Panel {
                   }
                 }
                 }
+              }
+
+              Text {
+                visible: root.displayedEvents.length > root.maxAgendaRows
+                textFormat: Text.PlainText
+                text: "and " + (root.displayedEvents.length - root.maxAgendaRows) + " more"
+                color: Qt.darker(root.contentForeground, 1.5)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
               }
             }
 

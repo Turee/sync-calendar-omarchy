@@ -19,6 +19,8 @@ import shutil
 import socket
 import struct
 import subprocess
+import tempfile
+import threading
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -58,8 +60,9 @@ MAX_FEED_INSTANCES = 20000          # Memory ceiling for one whole feed: the per
 # memory, but the output repeats it per instance: these bound what one copy
 # adds, and MAX_OUTPUT_JSON_BYTES bounds the sum before anything is serialized.
 MAX_TITLE_CHARS = 1024
-MAX_PLACE_CHARS = 2048       # location, URLs, calendar name
+MAX_FIELD_CHARS = 2048       # every other text field: id, location, URLs, names, colours
 MAX_DESCRIPTION_CHARS = 32768
+OUTPUT_FIELD_LIMITS = {"title": MAX_TITLE_CHARS, "description": MAX_DESCRIPTION_CHARS}
 
 
 def safe_read_bytes(stream, max_bytes=MAX_ICAL_BYTES):
@@ -242,21 +245,30 @@ def has_korean(text):
     )
 
 
+MAX_TRANSLATIONS_PER_SYNC = 200  # network requests; a feed decides how many titles it has
+_translations_left = MAX_TRANSLATIONS_PER_SYNC
+
+
 def translate_korean_to_english(text):
-    if not text or not has_korean(text):
+    global _translations_left
+    if not text or len(text) > MAX_TITLE_CHARS or not has_korean(text):
         return text
 
     if text in _translation_cache:
         return _translation_cache[text]
+    if _translations_left <= 0:
+        return text
+    _translations_left -= 1
 
     url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=en&dt=t&q=" + urllib.parse.quote(text)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=6) as resp:
-            raw = safe_read_bytes(resp, max_bytes=MAX_API_BYTES)
+            # A title's translation is a few KB: read no more, keep no longer.
+            raw = safe_read_bytes(resp, max_bytes=64 * 1024)
             data = json.loads(raw.decode("utf-8"))
             translated = "".join([part[0] for part in data[0] if part[0]]).strip()
-            if translated:
+            if translated and len(translated) <= MAX_TITLE_CHARS:
                 _translation_cache[text] = translated
                 return translated
     except Exception:
@@ -593,6 +605,7 @@ WINDOWS_TZ_ALIASES = {
 }
 
 _zone_cache = {}
+MAX_ZONE_NAMES = 1024
 
 
 def resolve_timezone(tzid):
@@ -609,6 +622,10 @@ def resolve_timezone(tzid):
         return None
     if key in _zone_cache:
         return _zone_cache[key]
+    # Zone names are short and few; a feed may invent millions of long ones,
+    # and each new one costs a lookup on disk. Past the cap they float.
+    if len(key) > 128 or len(_zone_cache) >= MAX_ZONE_NAMES:
+        return None
 
     candidates = [key]
     if "/" in key:
@@ -647,6 +664,19 @@ def extract_tzid(params):
         if param.upper().startswith("TZID="):
             return param.split("=", 1)[1]
     return None
+
+
+def date_params(params, value=True):
+    """
+    The parameters a date value reads, picked once per property: the first
+    TZID and, if any says so, VALUE=DATE. A property may list thousands of
+    parameters and of values, and each value would scan them all again.
+    """
+    tzid = next((p for p in params or [] if p.upper().startswith("TZID=")), None)
+    out = [tzid] if tzid else []
+    if value and any(p.strip().upper() == "VALUE=DATE" for p in params or []):
+        out.append("VALUE=DATE")
+    return out
 
 
 def value_zone(val_str, params=None):
@@ -852,6 +882,12 @@ def _week_number(d, wkst):
     return year, (d - start).days // 7 + 1, weeks
 
 
+# Candidate days all recurrence rules of one feed may check, per thread: each
+# feed is parsed in one worker thread, and parse_ics resets it.
+MAX_FEED_RECURRENCE_DAYS = 2_000_000  # a 3,200-rule feed of normal series uses about 200,000
+_feed_work = threading.local()
+
+
 def _resolve(values, size):
     """Turn negative positions (-1 = last) into positive ones for a set of `size`."""
     return {v if v > 0 else size + 1 + v for v in values}
@@ -879,11 +915,12 @@ def rrule_occurrences(dtstart, rule, skip_to=None, stop_after=None):
     wkst_code = str(rule.get("WKST") or "MO").upper()
     wkst = WEEKDAYS.index(wkst_code) if wkst_code in WEEKDAYS else 0
     bymonth = set(_rule_ints(rule, "BYMONTH", 1, 12))
-    bymonthday = _rule_ints(rule, "BYMONTHDAY", 1, 31, signed=True)
-    byyearday = _rule_ints(rule, "BYYEARDAY", 1, 366, signed=True)
-    byweekno = _rule_ints(rule, "BYWEEKNO", 1, 53, signed=True)
-    byday = _rule_byday(rule)
-    bysetpos = _rule_ints(rule, "BYSETPOS", 1, 366, signed=True)
+    # Sets: a rule may repeat a value thousands of times.
+    bymonthday = set(_rule_ints(rule, "BYMONTHDAY", 1, 31, signed=True))
+    byyearday = set(_rule_ints(rule, "BYYEARDAY", 1, 366, signed=True))
+    byweekno = set(_rule_ints(rule, "BYWEEKNO", 1, 53, signed=True))
+    byday = set(_rule_byday(rule))
+    bysetpos = set(_rule_ints(rule, "BYSETPOS", 1, 366, signed=True))
     byhour = sorted(set(_rule_ints(rule, "BYHOUR", 0, 23)))
     byminute = sorted(set(_rule_ints(rule, "BYMINUTE", 0, 59)))
     bysecond = sorted(set(_rule_ints(rule, "BYSECOND", 0, 59)))
@@ -891,11 +928,11 @@ def rrule_occurrences(dtstart, rule, skip_to=None, stop_after=None):
     # Parts the rule leaves out come from DTSTART.
     if freq == "YEARLY" and not (byweekno or byyearday or bymonthday or byday):
         bymonth = bymonth or {dtstart.month}
-        bymonthday = [dtstart.day]
+        bymonthday = {dtstart.day}
     elif freq == "MONTHLY" and not (bymonthday or byday):
-        bymonthday = [dtstart.day]
+        bymonthday = {dtstart.day}
     elif freq == "WEEKLY" and not byday:
-        byday = [(None, dtstart.weekday())]
+        byday = {(None, dtstart.weekday())}
 
     times = [dt_time(h, m, s)
              for h in (byhour or [dtstart.hour])
@@ -903,26 +940,30 @@ def rrule_occurrences(dtstart, rule, skip_to=None, stop_after=None):
              for s in (bysecond or [dtstart.second])]
 
     weekdays_any = {wd for ordinal, wd in byday if ordinal is None}
-    ordinals = [(o, wd) for o, wd in byday if o is not None]
+    ordinals = {(o, wd) for o, wd in byday if o is not None}
     # RFC 5545: ordinals count within the month for MONTHLY (and YEARLY with
     # BYMONTH), within the year for YEARLY, and mean nothing for WEEKLY/DAILY.
     if freq in ("WEEKLY", "DAILY") or (freq == "YEARLY" and byweekno):
         weekdays_any |= {wd for _, wd in ordinals}
-        ordinals = []
+        ordinals = set()
     month_scope = freq == "MONTHLY" or (freq == "YEARLY" and bool(bymonth))
+    # Negative positions resolved once per month, year or week-year length.
+    monthdays = {n: _resolve(bymonthday, n) for n in (28, 29, 30, 31)}
+    yeardays = {n: _resolve(byyearday, n) for n in (365, 366)}
+    weeknos = {n: _resolve(byweekno, n) for n in (52, 53)}
 
     def day_matches(d):
         if bymonth and d.month not in bymonth:
             return False
-        if bymonthday and d.day not in _resolve(bymonthday, calendar.monthrange(d.year, d.month)[1]):
+        if bymonthday and d.day not in monthdays[calendar.monthrange(d.year, d.month)[1]]:
             return False
         year_len = 366 if calendar.isleap(d.year) else 365
         doy = d.timetuple().tm_yday
-        if byyearday and doy not in _resolve(byyearday, year_len):
+        if byyearday and doy not in yeardays[year_len]:
             return False
         if byweekno:
             _, week, weeks = _week_number(d, wkst)
-            if week not in _resolve(byweekno, weeks):
+            if week not in weeknos[weeks]:
                 return False
         if byday:
             wd = d.weekday()
@@ -933,7 +974,7 @@ def rrule_occurrences(dtstart, rule, skip_to=None, stop_after=None):
             else:
                 pos, size = doy, year_len
             nth, nth_last = (pos - 1) // 7 + 1, -((size - pos) // 7 + 1)
-            return any(wd == w and o in (nth, nth_last) for o, w in ordinals)
+            return (nth, wd) in ordinals or (nth_last, wd) in ordinals
         return True
 
     def period_days(k):
@@ -972,12 +1013,19 @@ def rrule_occurrences(dtstart, rule, skip_to=None, stop_after=None):
     # against MAX_RECURRENCE_CANDIDATES.
     budget = MAX_RECURRENCE_CANDIDATES
     for _ in range(MAX_RECURRENCE_ITERATIONS):
+        if getattr(_feed_work, "days", None) is not None and _feed_work.days <= 0:
+            return
         try:
             days = period_days(k)
         except (ValueError, OverflowError):
             return  # past year 9999
         if stop_after is not None and days and datetime.combine(days[0], dt_time()) > stop_after:
             return
+        # Days that never match cost work too; one feed shares one budget.
+        if getattr(_feed_work, "days", None) is not None:
+            _feed_work.days -= len(days)
+            if _feed_work.days < 0:
+                return
         matched = [d for d in days if day_matches(d)]
         size = len(matched) * len(times)
         if bysetpos:
@@ -1023,17 +1071,19 @@ def expand_recurring_event(event, window_start, window_end):
     # EXDATE and override keys are local dates, so they are applied after
     # conversion rather than against source-zone dates.
     source["exdates"] = []
+    source["overridden"] = None
     slack = timedelta(days=1)
     occurrences = expand_rrule_in_wall_time(
         source, to_source(window_start) - slack, to_source(window_end) + slack, zone
     )
 
     exdates = set(event.get("exdates", []))
+    overridden = event.get("overridden") or ()  # shared by every master of the UID
     instances = []
     for inst in occurrences:
         start_dt = to_local_naive(inst["start_dt"], zone)
         date_key = start_dt.strftime("%Y-%m-%d")
-        if not window_start <= start_dt <= window_end or date_key in exdates:
+        if not window_start <= start_dt <= window_end or date_key in exdates or date_key in overridden:
             continue
         inst["start_dt"] = start_dt
         inst["end_dt"] = to_local_naive(inst["end_dt"], zone)
@@ -1069,6 +1119,7 @@ def expand_rrule_in_wall_time(event, window_start, window_end, zone=None):
     start_dt = event["start_dt"]
     duration = event["end_dt"] - start_dt
     exdates = set(event.get("exdates", []))
+    overridden = event.get("overridden") or ()
     stop_after = min(window_end, until_dt) if until_dt else window_end
 
     instances = []
@@ -1082,7 +1133,7 @@ def expand_rrule_in_wall_time(event, window_start, window_end, zone=None):
         if count and seen > count:
             break
         date_key = occurrence.strftime("%Y-%m-%d")
-        if occurrence >= window_start and date_key not in exdates:
+        if occurrence >= window_start and date_key not in exdates and date_key not in overridden:
             inst = dict(event)
             inst["start_dt"] = occurrence
             inst["end_dt"] = occurrence + duration
@@ -1146,6 +1197,18 @@ def expand_multiday_event(event, window_start, window_end):
 
 
 def parse_ics(content, cal_info, window_start, window_end):
+    """
+    Parses an ICS file string into structured events within the time window,
+    with one budget of recurrence work for the whole feed (MAX_FEED_RECURRENCE_DAYS).
+    """
+    _feed_work.days = MAX_FEED_RECURRENCE_DAYS
+    try:
+        return _parse_ics(content, cal_info, window_start, window_end)
+    finally:
+        _feed_work.days = None
+
+
+def _parse_ics(content, cal_info, window_start, window_end):
     """
     Parses an ICS file string into structured events within the time window.
     """
@@ -1229,16 +1292,18 @@ def parse_ics(content, cal_info, window_start, window_end):
             current["RECURRENCE-ID"] = rid_dt.strftime("%Y-%m-%d")
         elif prop_name == "RDATE":
             # Extra occurrences. A PERIOD value ("start/end") keeps its start.
+            rd_params = date_params(prop_params, value=False)
             for rd_val in val_part.split(","):
                 rd_val = rd_val.split("/", 1)[0].strip()
                 if rd_val:
-                    _, rd_dt = parse_datetime_value(rd_val, [p for p in prop_params if not p.upper().startswith("VALUE=")])
+                    _, rd_dt = parse_datetime_value(rd_val, rd_params)
                     current["rdates"].append(rd_dt)
         elif prop_name == "EXDATE":
+            ex_params = date_params(prop_params)
             for ex_val in val_part.split(","):
                 ex_val = ex_val.strip()
                 if ex_val:
-                    _, ex_dt = parse_datetime_value(ex_val, prop_params)
+                    _, ex_dt = parse_datetime_value(ex_val, ex_params)
                     current["exdates"].append(ex_dt.strftime("%Y-%m-%d"))
 
     auto_translate = cal_info.get("translateKorean", False)
@@ -1296,21 +1361,27 @@ def parse_ics(content, cal_info, window_start, window_end):
             "exdates": raw.get("exdates", []),
         }
 
+        # Occurrences replaced by override VEVENTs: one shared set per UID, not a
+        # copy per master, so masters x overrides cost no memory.
         if evt["rrule"] and "RECURRENCE-ID" not in raw:
-            evt["exdates"] = evt["exdates"] + sorted(overridden.get(raw.get("UID"), ()))
-
+            evt["overridden"] = overridden.get(raw.get("UID"))
+        exdates = set(evt["exdates"])
+        skipped = evt.get("overridden") or ()
         if evt["rrule"]:
             occurrences = expand_recurring_event(evt, window_start, window_end)
-        elif start_dt.strftime("%Y-%m-%d") not in evt["exdates"]:
+        elif start_dt.strftime("%Y-%m-%d") not in exdates:
             occurrences = [evt]
         else:
             occurrences = []
 
-        # RDATE adds occurrences next to (or instead of) the RRULE ones.
+        # RDATE adds occurrences next to (or instead of) the RRULE ones, under
+        # the same per-event ceiling.
         taken = {occ["start_dt"] for occ in occurrences}
         for rd_dt in raw.get("rdates", []):
+            if len(occurrences) >= MAX_EXPANDED_INSTANCES:
+                break
             date_key = rd_dt.strftime("%Y-%m-%d")
-            if rd_dt in taken or date_key in evt["exdates"] or not window_start <= rd_dt <= window_end:
+            if rd_dt in taken or date_key in exdates or date_key in skipped or not window_start <= rd_dt <= window_end:
                 continue
             taken.add(rd_dt)
             inst = dict(evt)
@@ -1324,11 +1395,10 @@ def parse_ics(content, cal_info, window_start, window_end):
                 inst_dt = datetime.strptime(inst["date_key"], "%Y-%m-%d")
                 if window_start <= inst_dt <= window_end:
                     normalized.append(inst)
+                    if len(normalized) >= MAX_FEED_INSTANCES:
+                        return normalized
 
-        if len(normalized) >= MAX_FEED_INSTANCES:
-            break
-
-    return normalized[:MAX_FEED_INSTANCES]
+    return normalized
 
 
 AUTH_FILE = os.path.join(STATE_DIR, "google-auth.json")
@@ -1664,15 +1734,21 @@ def google_auth_status_string(state, detail):
 
 
 def google_list(url, params, access_token, timeout=15, max_pages=20):
-    """Every item of a paginated Google Calendar list, following nextPageToken."""
-    items, params = [], dict(params)
+    """
+    Every item of a paginated Google Calendar list, following nextPageToken.
+    All pages together stay under MAX_ICAL_BYTES, the limit of one .ics feed:
+    invitations from anyone land in a Google calendar.
+    """
+    items, params, left = [], dict(params), MAX_ICAL_BYTES
     for _ in range(max_pages):
         req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers={
             "Authorization": f"Bearer {access_token}",
             "User-Agent": USER_AGENT,
         })
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(safe_read_bytes(resp, max_bytes=MAX_API_BYTES).decode("utf-8"))
+            raw = safe_read_bytes(resp, max_bytes=min(MAX_API_BYTES, left))
+        left -= len(raw)
+        data = json.loads(raw.decode("utf-8"))
         items.extend(data.get("items", []))
         params["pageToken"] = data.get("nextPageToken")
         if not params["pageToken"]:
@@ -1727,7 +1803,10 @@ def fetch_google_api_calendar(cal_info, window_start, window_end):
         items = []
         page_token = None
         data = {}
-        # A page holds at most 250 events: follow nextPageToken (bounded).
+        # A page holds at most 250 events: follow nextPageToken (bounded). All
+        # pages together stay under MAX_ICAL_BYTES, the limit of one .ics feed:
+        # invitations from anyone land in a Google calendar.
+        left = MAX_ICAL_BYTES
         for _ in range(20):
             url = base_url
             headers = {"Authorization": f"Bearer {access_token}", "User-Agent": USER_AGENT}
@@ -1738,7 +1817,8 @@ def fetch_google_api_calendar(cal_info, window_start, window_end):
             req = urllib.request.Request(url, headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=12) as resp:
-                    raw = safe_read_bytes(resp, max_bytes=MAX_API_BYTES)
+                    raw = safe_read_bytes(resp, max_bytes=min(MAX_API_BYTES, left))
+                    left -= len(raw)
                     data = json.loads(raw.decode("utf-8"))
                     etag = (getattr(resp, "headers", None) or {}).get("ETag")
             except urllib.error.HTTPError as exc:
@@ -1830,7 +1910,9 @@ def fetch_google_api_calendar(cal_info, window_start, window_end):
             }
 
             multidays = expand_multiday_event(evt, window_start, window_end)
-            events.extend(multidays)
+            events.extend(multidays[:MAX_FEED_INSTANCES - len(events)])
+            if len(events) >= MAX_FEED_INSTANCES:
+                break
 
         return {
             "name": name,
@@ -2246,7 +2328,9 @@ def fetch_jmap_calendar(cal_info, window_start, window_end):
             }
 
             multidays = expand_multiday_event(evt, window_start, window_end)
-            events.extend(multidays)
+            events.extend(multidays[:MAX_FEED_INSTANCES - len(events)])
+            if len(events) >= MAX_FEED_INSTANCES:
+                break
 
         return {
             "name": name,
@@ -2505,6 +2589,9 @@ def fetch_local_calendar(cal_info, window_start, window_end):
                 inst_dt = datetime.strptime(inst["date_key"], "%Y-%m-%d")
                 if window_start <= inst_dt <= window_end:
                     events.append(inst)
+            if len(events) >= MAX_FEED_INSTANCES:
+                events = events[:MAX_FEED_INSTANCES]
+                break
 
         return {
             "name": name,
@@ -2785,9 +2872,13 @@ def jmap_session(cal_info, cached=None):
     if not account_id:
         raise ValueError("no JMAP calendar account found")
 
+    # At most 16 short capability names: the list goes into every request,
+    # and the server decides how many it offers.
     jmap_using = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"]
     for cap in session_data.get("capabilities", {}):
-        if "calendar" in cap.lower() and cap not in jmap_using:
+        if len(jmap_using) >= 16:
+            break
+        if isinstance(cap, str) and len(cap) <= 256 and "calendar" in cap.lower() and cap not in jmap_using:
             jmap_using.append(cap)
 
     if cached is not None:
@@ -2995,6 +3086,17 @@ def caldav_credentials(cal_info):
             'Set "caldavUrl" (run --caldav-discover to list yours) to push events to it.'
         )
     return caldav_auth(cal_info, raw_url)
+
+
+def parse_server_xml(text):
+    """
+    The root element of a WebDAV answer. One with a DTD is refused: expat
+    expands a DTD's internal entities, up to 100 times the answer's size, and
+    WebDAV never needs one.
+    """
+    if re.search(r"<!(DOCTYPE|ENTITY)", text, re.IGNORECASE):
+        raise ValueError("The server's XML answer has a DTD, which is refused")
+    return ET.fromstring(text)
 
 
 def caldav_request(origin, auth_header, method, url, body=None, headers=None):
@@ -3210,7 +3312,7 @@ def caldav_find_href(url, origin, auth, uid):
             origin, auth, "REPORT", url, body,
             headers={"Content-Type": "application/xml; charset=utf-8", "Depth": "1"},
         )
-        tree = ET.fromstring(text)
+        tree = parse_server_xml(text)
     except (urllib.error.HTTPError, ET.ParseError):
         return None
     for href in tree.iter("{DAV:}href"):
@@ -3270,10 +3372,12 @@ def fetch_caldav_calendar(cal_info, window_start, window_end):
                 origin, auth, "REPORT", url, body,
                 headers={"Content-Type": "application/xml; charset=utf-8", "Depth": "1"},
             )
-            tree = ET.fromstring(text)
+            tree = parse_server_xml(text)
             content = "\r\n".join(
                 node.text for node in tree.iter(f"{{{CALDAV_NS}}}calendar-data") if node.text
             )
+            if len(content) > MAX_ICAL_BYTES:
+                raise ValueError(f"Calendar data exceeds the {MAX_ICAL_BYTES}-byte feed limit")
             if tag:
                 sync_cache_save(cache_path, {"tag": tag, "start": window_start.isoformat(),
                                              "end": query_end.isoformat(), "content": content})
@@ -3360,7 +3464,7 @@ def caldav_propfind(url, origin, auth, props, depth="0"):
         origin, auth, "PROPFIND", url, CALDAV_PROPFIND.format(ns=CALDAV_NS, props=props),
         headers={"Content-Type": "application/xml; charset=utf-8", "Depth": depth},
     )
-    return ET.fromstring(text)
+    return parse_server_xml(text)
 
 
 def caldav_prop_href(tree, tag, base):
@@ -3576,6 +3680,8 @@ def get_writable_calendars():
 
 def sync_all_events():
     """Fetch all configured and local calendars and write calendar-events.json."""
+    global _translations_left
+    _translations_left = MAX_TRANSLATIONS_PER_SYNC
     ensure_config_exists()
     os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
     load_translation_cache()
@@ -3639,37 +3745,20 @@ def sync_all_events():
                         "count": 0,
                     })
 
+    # An error status can quote a server's answer.
+    for status in cal_statuses:
+        for key, value in status.items():
+            if isinstance(value, str) and len(value) > MAX_FIELD_CHARS:
+                status[key] = value[:MAX_FIELD_CHARS]
+
     events_by_date = {}
     output_budget = MAX_OUTPUT_JSON_BYTES
     for evt in all_events:
         if not isinstance(evt, dict):
             continue
         d_key = str(evt.get("date_key") or "")
-        if not d_key:
+        if not d_key or len(d_key) > 10:
             continue
-        clipped = False
-
-        def text(key, limit, default=""):
-            nonlocal clipped
-            value = str(evt.get(key) or default)
-            if len(value) > limit:
-                clipped = True
-                value = value[:limit]
-            return value
-
-        title = text("title", MAX_TITLE_CHARS, "(Untitled Event)")
-        description = text("description", MAX_DESCRIPTION_CHARS)
-        location = text("location", MAX_PLACE_CHARS)
-        calendar_name = text("calendar", MAX_PLACE_CHARS, "Calendar")
-        meeting_url = text("meetingUrl", MAX_PLACE_CHARS)
-        meeting_provider = text("meetingProvider", MAX_PLACE_CHARS)
-        # ponytail: chars, not UTF-8 bytes; the file check after serializing stays exact
-        output_budget -= 512 + len(title) + len(description) + len(location) + len(calendar_name) \
-            + len(meeting_url) + len(meeting_provider)
-        if output_budget < 0:
-            break
-        if d_key not in events_by_date:
-            events_by_date[d_key] = []
 
         start_dt = evt.get("start_dt")
         end_dt = evt.get("end_dt")
@@ -3694,7 +3783,6 @@ def sync_all_events():
         # and CalDAV/JMAP series would be rewritten wrongly, so they stay read-only.
         editable = (
             writable
-            and not clipped  # saving would cut the event's text on the server
             and not (evt.get("rrule") or evt.get("recurring"))
             and isinstance(start_dt, datetime) and isinstance(end_dt, datetime)
             and (
@@ -3703,26 +3791,42 @@ def sync_all_events():
             )
         )
 
-        events_by_date[d_key].append({
+        entry = {
             "id": str(evt.get("id", "")),
-            "title": title,
-            "calendar": calendar_name,
+            "title": str(evt.get("title") or "(Untitled Event)"),
+            "calendar": str(evt.get("calendar") or "Calendar"),
             "calendarId": str(evt.get("calendarId", "")),
             "calendarType": str(evt.get("calendarType", "ical")),
             "writable": writable,
             "editable": editable,
             "recurring": bool(evt.get("rrule") or evt.get("recurring")),
-            "description": description,
+            "description": str(evt.get("description") or ""),
             "color": str(evt.get("color") or "#4A90E2"),
             "allDay": is_all_day,
             "startTime": start_time_str if not is_all_day else "All Day",
             "endTime": end_time_str if not is_all_day else "",
-            "location": location,
+            "location": str(evt.get("location") or ""),
             "startIso": start_iso,
             "endIso": end_iso,
-            "meetingUrl": meeting_url,
-            "meetingProvider": meeting_provider,
-        })
+            "meetingUrl": str(evt.get("meetingUrl") or ""),
+            "meetingProvider": str(evt.get("meetingProvider") or ""),
+        }
+        # Every instance of a recurring event shares its strings in memory, but
+        # the output repeats them per instance: bound each one, then the sum.
+        for key, value in entry.items():
+            if not isinstance(value, str) or len(value) <= OUTPUT_FIELD_LIMITS.get(key, MAX_FIELD_CHARS):
+                continue
+            entry["editable"] = False  # saving would cut the event's text on the server
+            if key == "id":
+                # A cut id would name another event: replace it, and stop writes.
+                entry["id"] = "long-id-" + hashlib.sha256(value.encode("utf-8", "replace")).hexdigest()[:32]
+                entry["writable"] = False
+            else:
+                entry[key] = value[:OUTPUT_FIELD_LIMITS.get(key, MAX_FIELD_CHARS)]
+        output_budget -= len(json.dumps(entry, ensure_ascii=False, indent=2).encode("utf-8")) + 256
+        if output_budget < 0:
+            break
+        events_by_date.setdefault(d_key, []).append(entry)
 
     for d_key in events_by_date:
         events_by_date[d_key].sort(
@@ -3780,25 +3884,18 @@ def save_config_command(new_config):
     return {"status": "success"}
 
 
-def _event_command(handler):
-    def run(payload):
-        if not isinstance(payload, dict):
-            raise ValueError("Payload must be a JSON object")
-        return handler(payload)
-    return run
-
-
 SERVE_COMMANDS = {
     "sync": lambda payload: sync_in_child(),
     "save-config": save_config_command,
-    "create-event": _event_command(create_event),
-    "update-event": _event_command(update_event),
-    "delete-event": _event_command(delete_event),
+    "create-event": lambda payload: event_in_child("--create-event", payload),
+    "update-event": lambda payload: event_in_child("--update-event", payload),
+    "delete-event": lambda payload: event_in_child("--delete-event", payload),
     "notify": notify_command,
 }
 
 
 SYNC_DEADLINE_SECONDS = 120
+MAX_SERVE_REPLY_CHARS = MAX_CONFIG_BYTES
 
 
 def sync_in_child(deadline=SYNC_DEADLINE_SECONDS):
@@ -3815,6 +3912,34 @@ def sync_in_child(deadline=SYNC_DEADLINE_SECONDS):
     except subprocess.TimeoutExpired:
         return {"status": "error", "message": f"Sync stopped after {deadline} s"}
     return {"status": "success" if proc.returncode == 0 else "error"}
+
+
+EVENT_DEADLINE_SECONDS = SYNC_DEADLINE_SECONDS + 60  # the write, then its sync
+
+
+def event_in_child(flag, payload, deadline=EVENT_DEADLINE_SECONDS):
+    """
+    Run one event command (the server write and the sync after it) as a child
+    process with a deadline, for the same reason as sync_in_child. The payload
+    goes in on stdin; the answer comes back through an anonymous temporary
+    file and is read up to MAX_SERVE_REPLY_CHARS.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("Payload must be a JSON object")
+    with tempfile.TemporaryFile() as out:
+        try:
+            subprocess.run([sys.executable, os.path.abspath(__file__), flag],
+                           input=(json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"),
+                           stdout=out, stderr=subprocess.DEVNULL, timeout=deadline, check=False)
+        except subprocess.TimeoutExpired:
+            return {"status": "error", "message": f"The calendar did not answer within {deadline} s"}
+        out.seek(0)
+        raw = out.read(MAX_SERVE_REPLY_CHARS + 1)
+    try:
+        result = json.loads(raw.decode("utf-8")) if len(raw) <= MAX_SERVE_REPLY_CHARS else None
+    except ValueError:
+        result = None
+    return result if isinstance(result, dict) else {"status": "error", "message": "No answer from the calendar backend"}
 
 
 def serve(stdin=None, stdout=None):
@@ -3847,7 +3972,14 @@ def serve(stdin=None, stdout=None):
             result = handler(request.get("payload"))
         except Exception as e:
             result = {"status": "error", "message": str(e)}
-        stdout.write(json.dumps({"id": req_id, "result": result}, ensure_ascii=False) + "\n")
+        # The shell reads each answer as one line: keep it small. An error can
+        # quote a server's answer.
+        if isinstance(result, dict) and isinstance(result.get("message"), str):
+            result["message"] = result["message"][:MAX_FIELD_CHARS]
+        reply = json.dumps({"id": req_id, "result": result}, ensure_ascii=False)
+        if len(reply) > MAX_SERVE_REPLY_CHARS:
+            reply = json.dumps({"id": req_id, "result": {"status": "error", "message": "The answer was too large"}})
+        stdout.write(reply + "\n")
         stdout.flush()
 
 

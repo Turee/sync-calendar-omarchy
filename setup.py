@@ -296,7 +296,7 @@ def main():
             save(entries)
             saved = True
         print("Syncing...")
-        fe.sync_all_events()
+        fe.sync_in_child()
         print("\nDone. Your calendar panel will update in a moment.")
         return 0
     except (KeyboardInterrupt, EOFError):

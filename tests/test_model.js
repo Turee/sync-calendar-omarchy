@@ -194,6 +194,14 @@ test("Model.dueNotifications sends each due reminder once", () => {
   assert.deepEqual(Model.dueNotifications(events, now, "staged", sent).map((d) => d.key.split("_")[0]), ["b"]);
 });
 
+test("Model.reminderSummary sends one notification however many are due", () => {
+  assert.equal(Model.reminderSummary([]), null);
+  const one = Model.reminderSummary([{ title: "An event starts now", body: "b" }]);
+  assert.deepEqual(one, { title: "An event starts now", body: "b" });
+  const many = Model.reminderSummary(Array.from({ length: 20000 }, () => ({ title: "t", body: "b" })));
+  assert.equal(many.title, "20000 events start soon");
+});
+
 test("Model.upcomingEvents flattens days with one heading each", () => {
   const byDate = {
     "2026-10-06": [{ id: "a", calendar: "Work" }, { id: "b", calendar: "Home" }],
