@@ -502,6 +502,45 @@ function formatAgendaMarkdown(events, selectedDateLabel, calendarName, hourCycle
   return lines.join("\n")
 }
 
+// Where an event lives in its own app, for the agenda's open button. A
+// calendar opts in with two keys in calendars.json:
+//   "openUrl":  link template; {id} is the event's UID and {date} its day
+//               (YYYY-MM-DD), both URL-encoded.
+//   "openWith": optional argv to open the link with, run without a shell;
+//               "{url}" in any argument becomes the link. Without it the
+//               link goes to the default browser.
+// Returns { url, argv } (argv null for the default browser) or null.
+var OPEN_URL_PATTERN = /^https?:\/\/[a-zA-Z0-9.\-]+(?::\d+)?(\/[^\s<>"'`]*)?$/i
+var MAX_OPEN_WITH_ARGS = 32
+
+function eventOpenTarget(configuredList, evt, dateKey) {
+  if (!evt || !evt.id) return null
+  var id = String(evt.id)
+  // The fetcher swaps an over-long UID for a hash, which no app would know.
+  if (id.indexOf("long-id-") === 0) return null
+  var list = configuredList || []
+  var cal = null
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].name === evt.calendar) { cal = list[i]; break }
+  }
+  if (!cal || typeof cal.openUrl !== "string") return null
+  var url = cal.openUrl.trim()
+    .split("{id}").join(encodeURIComponent(id))
+    .split("{date}").join(encodeURIComponent(String(dateKey || "")))
+  if (!OPEN_URL_PATTERN.test(url)) return null
+  var argv = null
+  var openWith = cal.openWith
+  if (openWith !== undefined && openWith !== null) {
+    if (!Array.isArray(openWith) || openWith.length === 0 || openWith.length > MAX_OPEN_WITH_ARGS) return null
+    argv = []
+    for (var j = 0; j < openWith.length; j++) {
+      if (typeof openWith[j] !== "string" || openWith[j] === "") return null
+      argv.push(openWith[j].split("{url}").join(url))
+    }
+  }
+  return { url: url, argv: argv }
+}
+
 function getWritableCalendars(configuredList) {
   var list = configuredList || []
   var writables = []
@@ -813,6 +852,7 @@ if (typeof module !== "undefined") {
     parseCalendarsConfig: parseCalendarsConfig,
     formatAgendaMarkdown: formatAgendaMarkdown,
     getWritableCalendars: getWritableCalendars,
+    eventOpenTarget: eventOpenTarget,
     parseTimeInput: parseTimeInput,
     notificationStage: notificationStage,
     dueNotifications: dueNotifications,

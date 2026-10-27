@@ -196,6 +196,35 @@ An entry with `"translateKorean": true` sends the title and location of its
 Korean events to Google Translate (`translate.googleapis.com`) and shows the
 English result. It is off by default. Leave it off for a private calendar.
 
+### Opening events in their own app
+
+A read-only feed often carries little more than a title and a time. An entry
+with `openUrl` puts an open button (`󰏌`) on each of its events, which opens
+the event where it lives. `{id}` in the link becomes the event's UID and
+`{date}` its day (`YYYY-MM-DD`), both URL-encoded. Outlook / Office 365 opens
+an event by its UID:
+
+```json
+{
+  "name": "Work",
+  "url": "https://outlook.office365.com/owa/calendar/.../calendar.ics",
+  "openUrl": "https://outlook.office.com/calendar/event/{id}"
+}
+```
+
+The link goes to the default browser. To open it somewhere else, such as an
+installed web app in a given browser profile, add `openWith`: the command as
+a list of arguments, run directly and never through a shell, with `{url}`
+standing for the link:
+
+```json
+"openWith": ["chromium", "--profile-directory=Profile 1", "--app-id=<app id>",
+             "--app-launch-url-for-shortcuts-menu-item={url}"]
+```
+
+The app id is in the web app's launcher under `~/.local/share/applications/`.
+Outlook opens a recurring event as its whole series.
+
 ## Connecting a Calendar
 
 Open the panel's **Settings (`󰒓`)** and click **`󰐕`**. A terminal opens with a short guided setup:

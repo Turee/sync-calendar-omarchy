@@ -229,3 +229,35 @@ test("Model.parseQuickAdd understands dates and times in English and French", ()
   assert.deepEqual(q("Lunch with Sam 2-3 people"), { title: "Lunch with Sam 2-3 people", date: "", start: "", end: "" });
   assert.deepEqual(q("Read chapter 9"), { title: "Read chapter 9", date: "", start: "", end: "" });
 });
+
+test("Model.eventOpenTarget builds links only for calendars that opt in", () => {
+  const cals = [
+    { name: "Work", openUrl: "https://outlook.office.com/calendar/event/{id}" },
+    { name: "Team", openUrl: "https://outlook.example.com/day/{date}?e={id}",
+      openWith: ["chromium", "--profile-directory=Profile 1", "--app-launch-url-for-shortcuts-menu-item={url}"] },
+    { name: "Plain" }
+  ];
+  assert.deepEqual(Model.eventOpenTarget(cals, { calendar: "Work", id: "0400AB" }, "2026-10-28"), {
+    url: "https://outlook.office.com/calendar/event/0400AB",
+    argv: null
+  });
+  assert.deepEqual(Model.eventOpenTarget(cals, { calendar: "Team", id: "a b@c" }, "2026-10-28"), {
+    url: "https://outlook.example.com/day/2026-10-28?e=a%20b%40c",
+    argv: ["chromium", "--profile-directory=Profile 1",
+      "--app-launch-url-for-shortcuts-menu-item=https://outlook.example.com/day/2026-10-28?e=a%20b%40c"]
+  });
+  assert.equal(Model.eventOpenTarget(cals, { calendar: "Plain", id: "x" }, ""), null);
+  assert.equal(Model.eventOpenTarget(cals, { calendar: "Missing", id: "x" }, ""), null);
+  assert.equal(Model.eventOpenTarget(cals, { calendar: "Work", id: "long-id-abc" }, ""), null);
+  assert.equal(Model.eventOpenTarget(cals, { calendar: "Work", id: "" }, ""), null);
+});
+
+test("Model.eventOpenTarget refuses unsafe links and commands", () => {
+  const bad = (cal) => Model.eventOpenTarget([Object.assign({ name: "C" }, cal)], { calendar: "C", id: "1" }, "");
+  assert.equal(bad({ openUrl: "file:///etc/passwd" }), null);
+  assert.equal(bad({ openUrl: "javascript:alert(1)" }), null);
+  assert.equal(bad({ openUrl: "https://x.example/{id}", openWith: "chromium {url}" }), null);
+  assert.equal(bad({ openUrl: "https://x.example/{id}", openWith: [] }), null);
+  assert.equal(bad({ openUrl: "https://x.example/{id}", openWith: ["chromium", 5] }), null);
+  assert.equal(bad({ openUrl: "https://x.example/{id}", openWith: new Array(33).fill("a") }), null);
+});
