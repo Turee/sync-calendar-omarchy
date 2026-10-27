@@ -502,17 +502,35 @@ function formatAgendaMarkdown(events, selectedDateLabel, calendarName, hourCycle
   return lines.join("\n")
 }
 
+// The only links the panel hands to a browser or an app: http(s), a plain
+// host, and none of the characters that could break out of an argument.
+var SAFE_HTTP_URL = /^https?:\/\/[a-zA-Z0-9.\-]+(?::\d+)?(\/[^\s<>"'`]*)?$/i
+
+function isSafeHttpUrl(url) {
+  return typeof url === "string" && SAFE_HTTP_URL.test(url)
+}
+
+// encodeURIComponent leaves !'()* alone; ' would fail isSafeHttpUrl, and
+// RFC 3986 reserves the rest, so encode them too.
+function encodeUrlPart(text) {
+  return encodeURIComponent(String(text)).replace(/[!'()*]/g, function(c) {
+    return "%" + c.charCodeAt(0).toString(16).toUpperCase()
+  })
+}
+
+var MAX_OPEN_WITH_ARGS = 32
+
 // Where an event lives in its own app, for the agenda's open button. A
 // calendar opts in with two keys in calendars.json:
-//   "openUrl":  link template; {id} is the event's UID and {date} its day
-//               (YYYY-MM-DD), both URL-encoded.
+//   "openUrl":  link template; {id} is the event's UID and {date} the agenda
+//               day the card is shown on (YYYY-MM-DD), both URL-encoded.
 //   "openWith": optional argv to open the link with, run without a shell;
 //               "{url}" in any argument becomes the link. Without it the
 //               link goes to the default browser.
+// The id is encoded before {date} is filled in and holds no braces, so it
+// cannot introduce a placeholder of its own. The first calendar with the
+// event's name wins, as everywhere else in the panel.
 // Returns { url, argv } (argv null for the default browser) or null.
-var OPEN_URL_PATTERN = /^https?:\/\/[a-zA-Z0-9.\-]+(?::\d+)?(\/[^\s<>"'`]*)?$/i
-var MAX_OPEN_WITH_ARGS = 32
-
 function eventOpenTarget(configuredList, evt, dateKey) {
   if (!evt || !evt.id) return null
   var id = String(evt.id)
@@ -525,9 +543,9 @@ function eventOpenTarget(configuredList, evt, dateKey) {
   }
   if (!cal || typeof cal.openUrl !== "string") return null
   var url = cal.openUrl.trim()
-    .split("{id}").join(encodeURIComponent(id))
-    .split("{date}").join(encodeURIComponent(String(dateKey || "")))
-  if (!OPEN_URL_PATTERN.test(url)) return null
+    .split("{id}").join(encodeUrlPart(id))
+    .split("{date}").join(encodeUrlPart(dateKey || ""))
+  if (!isSafeHttpUrl(url)) return null
   var argv = null
   var openWith = cal.openWith
   if (openWith !== undefined && openWith !== null) {
@@ -852,6 +870,8 @@ if (typeof module !== "undefined") {
     parseCalendarsConfig: parseCalendarsConfig,
     formatAgendaMarkdown: formatAgendaMarkdown,
     getWritableCalendars: getWritableCalendars,
+    isSafeHttpUrl: isSafeHttpUrl,
+    encodeUrlPart: encodeUrlPart,
     eventOpenTarget: eventOpenTarget,
     parseTimeInput: parseTimeInput,
     notificationStage: notificationStage,

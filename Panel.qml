@@ -581,7 +581,7 @@ Panel {
     if (!targetUrl) return
     // Validate scheme and characters before passing to Qt.openUrlExternally,
     // which hands the URL to the desktop portal over D-Bus: no command line.
-    if (!/^https?:\/\/[a-zA-Z0-9.\-]+(?::\d+)?(\/[^\s<>"'`]*)?$/i.test(targetUrl)) return
+    if (!Model.isSafeHttpUrl(targetUrl)) return
     Qt.openUrlExternally(targetUrl)
   }
 
@@ -2444,7 +2444,7 @@ Panel {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.leftMargin: Style.space(14)
                     anchors.rightMargin: Style.space((modelData.editable ? 56 : (modelData.writable ? 32 : 10))
-                      + (openEventButton.visible ? 26 : 0))
+                      + (openEventButton.visible ? 22 : 0))
                     spacing: Style.space(2)
 
                     Row {
